@@ -1,0 +1,554 @@
+{
+ "common": [
+  {
+   "name": "Bypass",
+   "action_path": "/optimizer/volume/bypass",
+   "feature_path_name": "Bypass",
+   "action_value": true,
+   "action_type": "boolean",
+   "busy_blinking": "/optimizer/calibration/computing",
+   "slow_blinking": true,
+   "container": "Common"
+  },
+  {
+   "name": "Dim",
+   "action_path": "/optimizer/volume/dim",
+   "feature_path_name": "Dim",
+   "action_value": true,
+   "action_type": "boolean",
+   "busy_blinking": null,
+   "slow_blinking": false,
+   "container": "Common"
+  },
+  {
+   "name": "Presets",
+   "data_subscribe": "/optimizer/preset",
+   "data_property": "/optimizer/preset/available",
+   "data_formatter": "presetsFormatter",
+   "action_path": "/optimizer/preset/current/id",
+   "feature_path_name": "SYP('/optimizer/preset/available[X]/name')",
+   "action_value": null,
+   "action_type": "number",
+   "busy_blinking": "/optimizer/preset/busy",
+   "slow_blinking": false,
+   "container": "Presets",
+   "with_formatter": true
+  },
+  {
+   "name": "Up",
+   "action_path": "/system/network/ethernet/connected",
+   "action_value": "status",
+   "feature_path_name": "Up",
+   "action_type": "string",
+   "container": "Network",
+   "busy_blinking": null,
+   "slow_blinking": false
+  },
+  {
+   "name": "Service",
+   "action_path": "/system/admin/soundcard/utils/srpc/b_connected",
+   "action_value": "status",
+   "action_type": "string",
+   "feature_path_name": "Service",
+   "container": "Network",
+   "busy_blinking": null,
+   "slow_blinking": false
+  },
+  {
+   "name": "DHCP",
+   "action_path": "/system/network/ethernet/dhcp",
+   "action_value": true,
+   "action_type": "boolean",
+   "feature_path_name": "DHCP",
+   "container": "Network",
+   "busy_blinking": null,
+   "slow_blinking": false
+  },
+  {
+   "name": "Static",
+   "action_path": "/system/network/ethernet/dhcp",
+   "action_value": false,
+   "action_type": "boolean",
+   "feature_path_name": "Static",
+   "container": "Network",
+   "busy_blinking": null,
+   "slow_blinking": false
+  },
+  {
+   "name": "Acoustic",
+   "action_path": "/optimizer/volume/opt_acoustic",
+   "action_value": true,
+   "action_type": "boolean",
+   "feature_path_name": "Optimizer Acoustic Alignment",
+   "container": "Runtime",
+   "busy_blinking": null,
+   "slow_blinking": false
+  },
+  {
+   "name": "Level",
+   "action_path": "/optimizer/volume/opt_levels",
+   "action_value": true,
+   "action_type": "boolean",
+   "feature_path_name": "Optimizer Levels Alignment",
+   "container": "Runtime",
+   "busy_blinking": null,
+   "slow_blinking": false
+  },
+  {
+   "name": "Delay",
+   "action_path": "/optimizer/volume/opt_delays",
+   "action_value": true,
+   "action_type": "boolean",
+   "feature_path_name": "Optimizer Delays Alignment",
+   "container": "Runtime",
+   "busy_blinking": null,
+   "slow_blinking": false
+  }
+ ],
+ "monitoring": [
+  {
+   "name": "Downmix",
+   "data_subscribe": "/monitoring/downmix",
+   "data_property": "/monitoring/downmix/available",
+   "data_formatter": "downmixFormatter",
+   "action_path": "/monitoring/downmix/current/uid",
+   "feature_path_name": "SYP('/monitoring/downmix/available[X]/name')",
+   "action_value": null,
+   "action_type": "uid",
+   "busy_blinking": null,
+   "slow_blinking": false,
+   "container": "Downmix",
+   "with_formatter": true
+  },
+  {
+   "name": "DRC",
+   "action_path": "/monitoring/drc/enable",
+   "action_value": true,
+   "action_type": "boolean",
+   "feature_path_name": "DRC",
+   "container": "Monitoring",
+   "busy_blinking": null,
+   "slow_blinking": false
+  },
+  {
+   "name": "Ref. Level",
+   "action_path": "/optimizer/volume/volume_recall",
+   "action_value": true,
+   "action_type": "boolean",
+   "feature_path_name": "Reference Level",
+   "container": "Monitoring",
+   "busy_blinking": null,
+   "slow_blinking": false
+  },
+  {
+   "name": "Bass Mgmt",
+   "action_path": "/monitoring/control/b_enable_bass_management",
+   "action_value": true,
+   "action_type": "boolean",
+   "feature_path_name": "Bass Management",
+   "container": "Monitoring",
+   "busy_blinking": null,
+   "slow_blinking": false
+  },
+  {
+   "name": "Toggle",
+   "action_path": "/monitoring/control/source_select_mode",
+   "action_value": "toggle",
+   "action_type": "symbol",
+   "feature_path_name": "Sources Toogle",
+   "container": "Monitoring",
+   "busy_blinking": null,
+   "slow_blinking": false
+  },
+  {
+   "name": "Sum",
+   "action_path": "/monitoring/control/source_select_mode",
+   "action_value": "sum",
+   "action_type": "symbol",
+   "feature_path_name": "Sources Sum",
+   "container": "Monitoring",
+   "busy_blinking": null,
+   "slow_blinking": false
+  },
+  {
+   "name": "Sum mode",
+   "action_path": "/monitoring/control/b_source_select_mode_sum",
+   "action_value": true,
+   "action_type": "boolean",
+   "feature_path_name": "Sources Sum mode",
+   "container": "Monitoring",
+   "busy_blinking": null,
+   "slow_blinking": false
+  },
+  {
+   "name": "AES Insert",
+   "action_path": "/monitoring/control/b_alt_input_active",
+   "action_value": true,
+   "action_type": "boolean",
+   "feature_path_name": "AES Insert",
+   "container": "Monitoring",
+   "busy_blinking": null,
+   "slow_blinking": false
+  },
+  {
+   "name": "Phone mute",
+   "action_path": "/monitoring/control/phone_mute",
+   "action_value": false,
+   "action_type": "boolean",
+   "feature_path_name": "Headphone",
+   "container": "Monitoring",
+   "busy_blinking": null,
+   "slow_blinking": false
+  },
+  {
+   "name": "Ph. mute Mon",
+   "action_path": "/monitoring/control/b_phones_mute_main_monitor",
+   "action_value": true,
+   "action_type": "boolean",
+   "feature_path_name": "Headphone",
+   "container": "Monitoring",
+   "busy_blinking": null,
+   "slow_blinking": false
+  },
+  {
+   "name": "Sources",
+   "data_subscribe": "/monitoring/entities",
+   "data_property": "/monitoring/entities/source",
+   "data_formatter": "monitoringSourcesFormatter",
+   "action_path": "/monitoring/control/main_selected_sources",
+   "feature_path_name": "/monitoring/entities/source[X]/name",
+   "action_value": null,
+   "action_type": "number",
+   "busy_blinking": null,
+   "slow_blinking": false,
+   "container": "Sources",
+   "with_formatter": true
+  },
+  {
+   "name": "Mixbuses",
+   "data_subscribe": "/monitoring/entities",
+   "data_property": "/monitoring/entities/source",
+   "data_formatter": "monitoringComplementarySourcesFormatter",
+   "action_path": "/monitoring/control/main_selected_sources",
+   "feature_path_name": "/monitoring/entities/source[X]/name",
+   "action_value": null,
+   "action_type": "number",
+   "busy_blinking": null,
+   "slow_blinking": false,
+   "container": "Send Sources",
+   "with_formatter": true
+  },
+  {
+   "name": "Output",
+   "data_subscribe": "/monitoring/entities",
+   "data_property": "/monitoring/entities/destination",
+   "data_formatter": "monitoringOutputFormatter",
+   "action_path": "/monitoring/control/main_selected_sources",
+   "feature_path_name": "/monitoring/entities/destination[X]/name",
+   "action_value": null,
+   "action_type": "number",
+   "busy_blinking": null,
+   "slow_blinking": false,
+   "container": "Send Sources",
+   "with_formatter": true
+  },
+  {
+   "name": "Speaker Sets",
+   "data_subscribe": "/monitoring/entities",
+   "data_property": "/monitoring/entities/destination",
+   "data_formatter": "monitoringSpeakersetsFormatter",
+   "action_path": "/monitoring/control/main_destination",
+   "feature_path_name": "/monitoring/entities/destination[X]/name",
+   "action_value": null,
+   "action_type": "number",
+   "busy_blinking": null,
+   "slow_blinking": false,
+   "container": "Speaker Sets",
+   "with_formatter": true
+  },
+  {
+   "name": "Solo Mode",
+   "action_path": "/monitoring/speaker_functions/mode",
+   "action_value": "solo",
+   "action_type": "symbol",
+   "feature_path_name": "Speaker Solo Mode",
+   "container": "Speaker Tools",
+   "busy_blinking": null,
+   "slow_blinking": false
+  },
+  {
+   "name": "Mute Mode",
+   "action_path": "/monitoring/speaker_functions/mode",
+   "action_value": "mute",
+   "action_type": "symbol",
+   "feature_path_name": "Speaker Mute Mode",
+   "container": "Speaker Tools",
+   "busy_blinking": null,
+   "slow_blinking": false
+  },
+  {
+   "name": "Front",
+   "action_path": "/monitoring/speaker_functions/b_front_solo",
+   "action_value": true,
+   "action_type": "boolean",
+   "feature_path_name": "Fronts Speaker Selection",
+   "container": "Speaker Tools",
+   "busy_blinking": null,
+   "slow_blinking": false
+  },
+  {
+   "name": "Surround",
+   "action_path": "/monitoring/speaker_functions/b_surround_solo",
+   "action_value": true,
+   "action_type": "boolean",
+   "feature_path_name": "Surrounds Speaker Selection",
+   "container": "Speaker Tools",
+   "busy_blinking": null,
+   "slow_blinking": false
+  },
+  {
+   "name": "Height",
+   "action_path": "/monitoring/speaker_functions/b_height_solo",
+   "action_value": true,
+   "action_type": "boolean",
+   "feature_path_name": "Heights Speaker Selection",
+   "container": "Speaker Tools",
+   "busy_blinking": null,
+   "slow_blinking": false
+  },
+  {
+   "name": "Sub",
+   "action_path": "/monitoring/speaker_functions/b_subwoofer_solo",
+   "action_value": true,
+   "action_type": "boolean",
+   "feature_path_name": "Subwoofers Speaker Selection",
+   "container": "Speaker Tools",
+   "busy_blinking": null,
+   "slow_blinking": false
+  },
+  {
+   "name": "SpkFunc",
+   "data_subscribe": "/monitoring/speaker_functions/",
+   "data_property": "/monitoring/speaker_functions/channels",
+   "data_formatter": "speakerFuncChannelsFormatter",
+   "with_formatter": true,
+   "action_path": "/monitoring/speaker_functions/channels[X]/state",
+   "action_value": true,
+   "action_type": "boolean",
+   "feature_path_name": "/monitoring/speaker_functions/channels[X]/state",
+   "container": "Speaker Tools",
+   "busy_blinking": null,
+   "slow_blinking": false
+  },
+  {
+   "name": "Snapshots",
+   "data_subscribe": "/monitoring/preset",
+   "data_property": "/monitoring/preset/available",
+   "data_formatter": "snapshotsFormatter",
+   "action_path": "/monitoring/preset/current/id",
+   "feature_path_name": "/monitoring/preset/available[X]/name",
+   "action_value": null,
+   "action_type": "number",
+   "busy_blinking": null,
+   "slow_blinking": false,
+   "container": "Snapshots",
+   "with_formatter": true
+  }
+ ],
+ "no_monitoring": {
+  "list": [
+   {
+    "name": "Sources",
+    "data_subscribe": "/metapresets",
+    "data_property": "/metapresets/available",
+    "data_formatter": "metapresetsFormatter",
+    "action_path": "/metapresets/current/id",
+    "feature_path_name": "/metapresets/available[X]/name",
+    "action_value": null,
+    "action_type": "number",
+    "busy_blinking": null,
+    "slow_blinking": false,
+    "container": "Sources",
+    "with_formatter": true
+   },
+   {
+    "name": "BM OFF",
+    "action_path": "/optimizer/bass_management/bm_type",
+    "feature_path_name": "Bass Mgmt OFF",
+    "action_value": "none",
+    "action_type": "symbol",
+    "busy_blinking": null,
+    "slow_blinking": false,
+    "container": "Bass Mgmt"
+   },
+   {
+    "name": "BM ON",
+    "action_path": "/optimizer/bass_management/bm_type",
+    "feature_path_name": "Bass Mgmt ON",
+    "action_value": "mono",
+    "action_type": "symbol",
+    "busy_blinking": null,
+    "slow_blinking": false,
+    "container": "Bass Mgmt"
+   }
+  ]
+ },
+ "remapping": {
+  "list": [
+   {
+    "name": "Off",
+    "action_path": "/optimizer/remapping/mode",
+    "action_value": "none",
+    "action_type": "symbol",
+    "feature_path_name": "Remapping Off",
+    "container": "Remapping",
+    "busy_blinking": null,
+    "slow_blinking": false
+   },
+   {
+    "name": "Matrix",
+    "action_path": "/optimizer/remapping/mode",
+    "action_value": "manual",
+    "action_type": "symbol",
+    "feature_path_name": "Remapping Matrix",
+    "container": "Remapping",
+    "busy_blinking": null,
+    "slow_blinking": false
+   },
+   {
+    "name": "Automatic",
+    "action_path": "/optimizer/remapping/mode",
+    "action_value": "autoroute",
+    "action_type": "symbol",
+    "feature_path_name": "Remapping Automatic",
+    "container": "Remapping",
+    "busy_blinking": null,
+    "slow_blinking": false
+   },
+   {
+    "name": "2D",
+    "action_path": "/optimizer/remapping/mode",
+    "action_value": "2D",
+    "action_type": "symbol",
+    "feature_path_name": "Remapping 2D",
+    "container": "Remapping",
+    "busy_blinking": null,
+    "slow_blinking": false
+   },
+   {
+    "name": "3D",
+    "action_path": "/optimizer/remapping/mode",
+    "action_value": "3D",
+    "action_type": "symbol",
+    "feature_path_name": "Remapping 3D",
+    "container": "Remapping",
+    "busy_blinking": null,
+    "slow_blinking": false
+   }
+  ]
+ },
+ "listening_format": {
+  "list": [
+   {
+    "name": "Auto",
+    "action_path": "/io/decoders/listening_format",
+    "action_value": "auto",
+    "action_type": "symbol",
+    "feature_path_name": "Listening Format Auto",
+    "container": "Listening Formats",
+    "busy_blinking": null,
+    "slow_blinking": null
+   },
+   {
+    "name": "Neural-X",
+    "action_path": "/io/decoders/listening_format",
+    "action_value": "dts_parma",
+    "action_type": "symbol",
+    "feature_path_name": "Listening Format Neural-X",
+    "container": "Listening Formats",
+    "busy_blinking": null,
+    "slow_blinking": null
+   },
+   {
+    "name": "Native",
+    "action_path": "/io/decoders/listening_format",
+    "action_value": "none",
+    "action_type": "symbol",
+    "feature_path_name": "Listening Format Native",
+    "container": "Listening Formats",
+    "busy_blinking": null,
+    "slow_blinking": null
+   },
+   {
+    "name": "Upmix on Native",
+    "action_path": "/io/decoders/listening_format",
+    "action_value": "upmix_on_native",
+    "action_type": "symbol",
+    "feature_path_name": "Listening Format Upmix on Native",
+    "container": "Listening Formats",
+    "busy_blinking": null,
+    "slow_blinking": null
+   },
+   {
+    "name": "Legacy",
+    "action_path": "/io/decoders/listening_format",
+    "action_value": "legacy",
+    "action_type": "symbol",
+    "feature_path_name": "Listening Format Legacy",
+    "container": "Listening Formats",
+    "busy_blinking": null,
+    "slow_blinking": null
+   }
+  ]
+ },
+ "dolby": {
+  "list": [
+   {
+    "name": "Dolby Srnd",
+    "action_path": "/io/decoders/listening_format",
+    "action_value": "dolby",
+    "action_type": "symbol",
+    "feature_path_name": "Listening Format Dolby",
+    "container": "Listening Formats",
+    "busy_blinking": null,
+    "slow_blinking": null
+   }
+  ]
+ },
+ "auro": {
+  "list": [
+   {
+    "name": "Auro-3D",
+    "action_path": "/io/decoders/listening_format",
+    "action_value": "auro3d",
+    "action_type": "symbol",
+    "feature_path_name": "Listening Format Auro-3D",
+    "container": "Listening Formats",
+    "busy_blinking": null,
+    "slow_blinking": null
+   }
+  ]
+ },
+ "power": [
+  {
+   "name": "Power Off",
+   "action_path": "/system/power_supply/shutdown",
+   "feature_path_name": "Power off processor",
+   "action_value": true,
+   "action_type": "boolean",
+   "busy_blinking": null,
+   "slow_blinking": false,
+   "container": "Power"
+  },
+  {
+   "name": "Reboot",
+   "action_path": "/system/power_supply/reboot",
+   "feature_path_name": "Reboot processor",
+   "action_value": true,
+   "action_type": "boolean",
+   "busy_blinking": null,
+   "slow_blinking": false,
+   "container": "Power"
+  }
+ ]
+}
