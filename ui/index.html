@@ -173,13 +173,15 @@
   <div class="row"><button class="btn" id="deckClose">Close</button><button class="btn" id="deckOpen">Open folder</button>
   <button class="btn danger" id="deckAll" style="background:var(--accent);border-color:var(--accent);color:#05262b">Make all launchers</button></div>
 </div></div>
-<div class="modal" id="midiModal"><div class="card" style="width:min(560px,92%)">
+<div class="modal" id="midiModal"><div class="card" style="width:min(760px,94%)">
   <h3>MIDI</h3>
   <p style="margin-top:0">Any controller, or a Stream Deck MIDI plugin, can run every function. Send MIDI to the port
   <b>Trinnov Functions</b> (it appears in MIDI apps by itself), or from any controller already connected to this Mac.
   A button press is a <b>note on</b>, a <b>program change</b>, or a <b>CC at 64 or more</b>.</p>
   <div class="midiline" id="midiStatus"></div>
-  <div class="midiline" id="midiLast"></div>
+  <h4 style="margin:10px 0 2px">Messages heard (live)</h4>
+  <div class="mapwrap" style="max-height:150px"><table class="map" id="midiHist"></table></div>
+  <h4 style="margin:10px 0 2px">Mapped functions</h4>
   <div class="mapwrap"><table class="map" id="midiTable"></table></div>
   <p style="color:var(--legend);font-size:13px">To map one function: hover its tile, click <b>MIDI</b>, then press the key on your controller.
   Power Off and Reboot cannot be mapped (a stray note would switch your Nova off).</p>
@@ -262,13 +264,24 @@ async function midiProgress(m) {
     if (!first) { menu = await api("/api/menu"); renderMenu(); if ($("midiModal").classList.contains("show")) midiUi(); }
   }
 }
+let midiSig = "", midiTimer = null;
 async function midiUi() {
   const m = await api("/api/midi");
   $("midiStatus").textContent = `MIDI helper: ${m.status}. Ports heard: ${m.ports.length ? m.ports.join(", ") : "none yet"}. Virtual port: “${m.virtual_port}”.`;
-  $("midiLast").textContent = m.last ? `Last message: ${m.last.text} value ${m.last.value} from ${m.last.port}` + (m.last.action ? ` → ${m.last.action}` : "") : "No MIDI message received yet.";
-  $("midiTable").innerHTML = m.bindings.length
-    ? m.bindings.map((b) => `<tr><td>${esc(b.section)} / ${esc(b.label)}</td><td>${esc(b.text)}</td></tr>`).join("")
-    : '<tr><td style="color:var(--legend)">No function is mapped yet. Use “Map every function automatically”, or learn them one by one.</td></tr>';
+  $("midiHist").innerHTML = m.history && m.history.length
+    ? m.history.map((e) => `<tr><td style="white-space:nowrap">${e.at}</td><td>${esc(e.text)}</td><td>value ${e.value}</td><td>${esc(e.port)}</td>
+        <td style="font:11px ui-monospace,Menlo,monospace;color:var(--legend)">${esc(e.raw || "")}</td><td>${esc(e.result || "")}</td></tr>`).join("")
+    : '<tr><td style="color:var(--legend)">Nothing heard yet. Press a key on your controller or Stream Deck MIDI button.</td></tr>';
+  const sig = JSON.stringify(m.bindings);
+  if (sig !== midiSig) {                                    // only redraw the mapping table when it changed (keeps a open dropdown steady)
+    midiSig = sig;
+    $("midiTable").innerHTML = m.bindings.length
+      ? m.bindings.map((b) => `<tr><td>${esc(b.section)} / ${esc(b.label)}</td><td>${esc(b.text)}</td><td class="x">${b.msg.type === "cc"
+          ? `<select class="trig" data-s="${esc(b.section)}" data-l="${esc(b.selector)}"><option value="press" ${b.trigger === "any" ? "" : "selected"}>press (64 and up)</option>
+             <option value="any" ${b.trigger === "any" ? "selected" : ""}>every value (toggle button)</option></select>` : ""}</td></tr>`).join("")
+      : '<tr><td style="color:var(--legend)">No function is mapped yet. Use “Map every function automatically”, or learn them one by one.</td></tr>';
+    $("midiTable").querySelectorAll("select.trig").forEach((s) => (s.onchange = () => api("/api/midi/trigger", { section: s.dataset.s, selector: s.dataset.l, trigger: s.value })));
+  }
 }
 async function applyState(st) {
   lastState = st;
@@ -317,8 +330,8 @@ $("liveBtn").onclick = async () => { await api("/api/readonly", { on: false }); 
 $("roBtn").onclick = async () => { await api("/api/readonly", { on: true }); poll(); };
 $("reloadBtn").onclick = reload;
 $("deckBtn").onclick = () => $("deckModal").classList.add("show");
-$("midiBtn").onclick = () => { midiUi(); $("midiModal").classList.add("show"); };
-$("midiClose").onclick = () => $("midiModal").classList.remove("show");
+$("midiBtn").onclick = () => { midiSig = ""; midiUi(); $("midiModal").classList.add("show"); clearInterval(midiTimer); midiTimer = setInterval(midiUi, 1000); };
+$("midiClose").onclick = () => { $("midiModal").classList.remove("show"); clearInterval(midiTimer); };
 $("learnCancel").onclick = () => api("/api/midi/learn", { cancel: true });
 $("midiAuto").onclick = async () => {
   const r = await api("/api/midi/default", {});

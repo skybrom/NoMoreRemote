@@ -68,14 +68,16 @@ Every function can be mapped to a MIDI message, so a MIDI controller, a Stream D
 
 - **Where to send:** to the virtual port **Trinnov Functions** (it appears in any MIDI app by itself), or from a controller already connected to this Mac (the app listens to every MIDI input, including ones plugged in later and IAC Driver buses).
 - **What counts as a button press:** a **note on**, a **program change**, or a **CC of 64 or more**. A note off, or a CC below 64, is the release and is ignored. A CC that sends `127` on every press and nothing on release works too.
-- **Map one function (learn):** hover its tile, click **MIDI**, then press the key on your controller. The tile then shows a badge like `N40`. Messages from a controller's *DAW* port are never learned (those ports chatter all the time).
+- **Map one function (learn):** hover its tile, click **MIDI**, then press the key on your controller. The tile then shows a badge like `N40`. Messages from a controller's *DAW* port are never learned (those ports chatter all the time), and a note off is ignored (it waits for the press).
+- **Toggle buttons:** a button that alternates CC 0 and CC 127 (for example the Stream Deck plugin's *MIDI CC Toggle*) cannot be told apart by its value. If a CC is learned from a low value it is set to *every value counts* automatically, and you can change that per mapping in the MIDI window.
+- **See what arrives:** the MIDI window lists every message heard, live, with its raw bytes and what became of it (*not mapped*, *release, ignored*, *learned*, or the function it ran). If a key does nothing, start there.
 - **Map everything at once:** **MIDI…** in the header → **Map every function automatically** gives each function one note, in menu order, on channel 1, starting at note 36. The window lists the table, so you can set up a Stream Deck from it.
 - **Volume and Mute** are functions too (the *Volume* section), so a button can nudge the level or mute.
 - **Safety:** Power Off and Reboot **cannot be mapped** (a stray note would switch the Nova off). The Read-only switch blocks MIDI as well. Mappings are saved in `~/Library/Application Support/TrinnovFunctions/midi_map.json`.
 - **Needs the Swift compiler** (part of Apple's developer tools, already needed for Python on most Macs): the first start builds a small helper (`midi/trinnov-midi.swift`) for a few seconds.
 - MIDI works while the app or the background service is running, so the **service** is the way to use it day to day.
 
-**A Stream Deck with MIDI:** the Stream Deck app has no MIDI output of its own, so install a MIDI plugin from Elgato's marketplace, choose **Trinnov Functions** as its output port, and send the notes from the table above.
+**A Stream Deck with MIDI:** the Stream Deck app has no MIDI output of its own, so use a MIDI plugin from Elgato's marketplace (for example *Midi Button*). Such plugins usually create their own MIDI port (the app hears it by itself, whatever its name) or send to a port you choose: pick **Trinnov Functions** to send straight here. Use the plugin's plain **MIDI Note** or **MIDI CC** action for a normal button; its *Toggle* actions alternate values and need the *every value* option above.
 
 ## The `trinnov` command
 

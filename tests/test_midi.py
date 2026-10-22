@@ -61,8 +61,9 @@ def token():
     return re.search(r'const TOKEN = "([^"]+)"', urllib.request.urlopen("http://127.0.0.1:8797/").read().decode()).group(1)
 
 
-def send(*args, source="Test Controller"):
-    subprocess.run([os.path.join(BUILD, "midi_send"), "source", source, "2", *map(str, args)], capture_output=True, timeout=30)
+def send(*args, source="Test Controller", env=None):
+    subprocess.run([os.path.join(BUILD, "midi_send"), "source", source, "2", *map(str, args)], capture_output=True, timeout=30,
+                   env={**os.environ, **(env or {})})
     time.sleep(0.8)
 
 
@@ -107,8 +108,8 @@ try:
     check("clear removes every mapping", api("/api/midi")["bindings"] == [])
     r = api("/api/midi/learn", {"id": ids["Preset B"]})
     check("learn starts", r["ok"] and api("/api/midi")["learning"]["label"] == "Preset B", r)
-    send("cc", 1, 7, 30, source="Test Controller")
-    check("a quiet CC (below 64) is ignored while learning", api("/api/midi")["learning"] is not None)
+    send("note", 1, 50, 0, source="Test Controller")
+    check("a note off is not learned (it waits for the press)", api("/api/midi")["learning"] is not None and not api("/api/midi")["bindings"])
     send("note", 1, 50, 100, source="Test DAW Out")
     check("a controller's DAW port is never learned from", api("/api/midi")["learning"] is not None and not api("/api/midi")["bindings"])
     send("cc", 2, 20, 127, source="Test Controller")
@@ -131,6 +132,39 @@ try:
     check("Power cannot be learned", not r["ok"] and "Power" in r["error"], r)
     r = api("/api/midi/learn", {"id": ids["DHCP"]})
     check("view-only entries cannot be learned", not r["ok"], r)
+
+    # a toggle-style button (alternates CC 0 and 127): learned from its first message, then every message counts
+    api("/api/midi/clear", {})
+    api("/api/midi/learn", {"id": ids["Preset A"]})
+    send("cc", 16, 23, 0)
+    b = api("/api/midi")["bindings"]
+    check("a CC learned from a LOW value counts every value afterwards (toggle buttons)", b and b[0]["trigger"] == "any" and b[0]["msg"] == {"type": "cc", "channel": 16, "number": 23}, b)
+    n = len(writes())
+    send("cc", 16, 23, 127)
+    time.sleep(0.4)
+    send("cc", 16, 23, 0)
+    check("each press of the toggle button runs the function (127 then 0)", writes()[n:] == ['/optimizer/preset/current {"id": 1}'] * 2, writes()[n:])
+    api("/api/midi/trigger", {"section": "Presets", "selector": "Preset A", "trigger": "press"})
+    n = len(writes())
+    send("cc", 16, 23, 0)
+    check("switching the mapping to 'press' ignores the low value again", writes()[n:] == [], writes()[n:])
+    check("the trigger choice is saved with the mapping", api("/api/midi")["bindings"][0]["trigger"] == "press")
+
+    # what was heard is recorded, with the raw bytes and what became of it
+    h = api("/api/midi")["history"]
+    check("every message is recorded with its raw bytes", h and h[0]["raw"] and re.fullmatch(r"[0-9A-F]+", h[0]["raw"]), h[:1])
+    check("...and what became of it", all(e["result"] for e in h[:3]), h[:3])
+    raw_cc = next((e for e in h if e["text"].startswith("CC 23")), None)
+    check("a CC on channel 16 is read back exactly (BF 17 xx)", raw_cc and raw_cc["raw"].startswith("BF17"), raw_cc)
+
+    # several messages in ONE packet list, and running status (the bugs a real plugin can trigger)
+    api("/api/midi/default", {})
+    n = len(writes())
+    send("note", 1, 36, 100, "note", 1, 37, 100, env={"MIDI_SEND_MULTI": "1"})
+    check("two messages in one packet list both run (36 Bypass, 37 Dim)", writes()[n:] == ['/optimizer/volume {"bypass": true}', '/optimizer/volume {"dim": true}'], writes()[n:])
+    send("cc", 1, 20, 127, "cc", 1, 21, 127, env={"MIDI_SEND_RUNNING": "1"})
+    texts = [e["text"] for e in api("/api/midi")["history"]]
+    check("running status (one status byte, two messages) is read as two CCs", "CC 20 (ch 1)" in texts and "CC 21 (ch 1)" in texts, texts)
 
     # a Power binding written by hand is still refused
     api("/api/midi/clear", {})

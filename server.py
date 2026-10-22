@@ -676,6 +676,7 @@ class Midi:
         self.status = "starting"
         self.ports = []
         self.last = None
+        self.history = []
         self.learning = None                             # {"section", "selector", "label"} while waiting for a message
         self.version = 0
         self.fired = {}
@@ -741,8 +742,14 @@ class Midi:
             self.proc.terminate()
 
     # -- incoming messages
+    def note_history(self, entry):
+        self.history.insert(0, entry)
+        del self.history[25:]
+        self.last = entry
+        self.version += 1
+
     def on_event(self, ev):
-        if ev.get("type") == "ready":
+        if ev.get("type") in ("ready", "ports"):
             self.ports = ev.get("sources", [])
             self.version += 1
             return
@@ -751,32 +758,57 @@ class Midi:
             return
         msg = {"type": ev["type"], "channel": ev["channel"], "number": ev["number"]}
         value = ev.get("value", 0)
-        # a button press: a note on, a program change, or a CC of 64 or more (note off / low CC = release, ignored).
-        # Every such message counts, so a controller that only sends "127" on each press keeps working.
-        pressed = value > 0 if msg["type"] == "note" else True if msg["type"] == "program" else value >= 64
+        entry = {"text": midi_text(msg), "value": value, "port": port, "raw": ev.get("raw"),
+                 "at": time.strftime("%H:%M:%S"), "result": None}
         with self.lock:
-            self.last = {"text": midi_text(msg), "value": value, "port": port, "at": time.strftime("%H:%M:%S"), "action": None}
-            self.version += 1
-            if not pressed:
-                return
+            self.note_history(entry)
             if self.learning:
-                if "DAW" in port:                          # controllers' DAW ports chatter constantly; never learn from them
-                    return
-                self._bind(msg)
+                self._learn_from(msg, value, port, entry)
                 return
             matches = [b for b in self.bindings if b["msg"] == msg]
-        for b in matches:
-            now = time.time()
-            if now - self.fired.get(json.dumps(b["msg"]), 0) < 0.2:
-                continue                                   # a double trigger
-            self.fired[json.dumps(b["msg"])] = now
-            threading.Thread(target=self._fire, args=(b,), daemon=True).start()
+            if not matches:
+                entry["result"] = "not mapped"
+                return
+            todo = []
+            for b in matches:
+                if not self.is_press(msg["type"], value, b.get("trigger", "press")):
+                    entry["result"] = "release, ignored"
+                    continue
+                now = time.time()
+                if now - self.fired.get(json.dumps(b["msg"]), 0) < 0.2:
+                    entry["result"] = "double trigger, ignored"
+                    continue
+                self.fired[json.dumps(b["msg"])] = now
+                todo.append(b)
+        for b in todo:
+            threading.Thread(target=self._fire, args=(b, entry), daemon=True).start()
 
-    def _fire(self, b):
+    @staticmethod
+    def is_press(kind, value, trigger):
+        """A note on, a program change, or a CC of 64 or more is a button press (note off / low CC = release).
+        Trigger 'any' counts every CC value: for buttons that alternate 0 and 127 (toggle buttons)."""
+        if kind == "program":
+            return True
+        if kind == "note":
+            return value > 0
+        return True if trigger == "any" else value >= 64
+
+    def _learn_from(self, msg, value, port, entry):
+        if "DAW" in port:                                   # a controller's DAW port chatters constantly; never learn from it
+            entry["result"] = "ignored while learning (a DAW port)"
+            return
+        if msg["type"] == "note" and value == 0:
+            entry["result"] = "note off, waiting for the press"
+            return
+        # a CC with a low value as the first message means this button's presses can be low: count every value
+        trigger = "any" if msg["type"] == "cc" and value < 64 else "press"
+        entry["result"] = "learned"
+        self._bind(msg, trigger)
+
+    def _fire(self, b, entry):
         result = self.app.midi_press(b, self.allow_power)
         with self.lock:
-            if self.last:
-                self.last["action"] = f"{b['section']}/{b['selector']}: {result}"
+            entry["result"] = f"{b['section']} / {b['label']}: {result}"
             self.version += 1
 
     # -- mapping
@@ -790,12 +822,19 @@ class Midi:
             self.learning = None
             self.version += 1
 
-    def _bind(self, msg):
+    def _bind(self, msg, trigger="press"):
         l, self.learning = self.learning, None
         self.bindings = [b for b in self.bindings if b["msg"] != msg]
-        self.bindings.append({"msg": msg, "section": l["section"], "selector": l["selector"], "label": l["label"]})
+        self.bindings.append({"msg": msg, "section": l["section"], "selector": l["selector"], "label": l["label"], "trigger": trigger})
         self.save()
-        self.app.note("info", f"MIDI: {midi_text(msg)} now runs {l['section']}/{l['label']}")
+        self.app.note("info", f"MIDI: {midi_text(msg)} now runs {l['section']}/{l['label']}" + (" (every value counts)" if trigger == "any" else ""))
+
+    def set_trigger(self, section, selector, trigger):
+        with self.lock:
+            for b in self.bindings:
+                if b["section"] == section and b["selector"] == selector:
+                    b["trigger"] = "any" if trigger == "any" else "press"
+            self.save()
 
     def unbind(self, section, selector):
         with self.lock:
@@ -828,7 +867,7 @@ class Midi:
     def info(self):
         with self.lock:
             return {**self.brief(), "status": self.status, "ports": self.ports, "virtual_port": "Trinnov Functions",
-                    "allow_power": self.allow_power,
+                    "allow_power": self.allow_power, "history": self.history[:12],
                     "bindings": [{**b, "text": midi_text(b["msg"])} for b in self.bindings]}
 
 
@@ -855,9 +894,19 @@ def install_service():
     if not os.environ.get("TRINNOV_NO_LAUNCHCTL"):
         domain = f"gui/{os.getuid()}"
         subprocess.run(["launchctl", "bootout", f"{domain}/{SERVICE_LABEL}"], capture_output=True)
-        r = subprocess.run(["launchctl", "bootstrap", domain, SERVICE_PLIST], capture_output=True, text=True)
-        if r.returncode != 0:
-            raise OSError("launchctl could not start the service: " + (r.stderr.strip() or "unknown error"))
+        for _ in range(40):                              # launchd tears the old one down asynchronously: wait until it is gone
+            if subprocess.run(["launchctl", "print", f"{domain}/{SERVICE_LABEL}"], capture_output=True).returncode != 0:
+                break
+            time.sleep(0.5)
+        err = ""
+        for _ in range(6):                               # and retry: starting too soon gives 'Input/output error'
+            r = subprocess.run(["launchctl", "bootstrap", domain, SERVICE_PLIST], capture_output=True, text=True)
+            if r.returncode == 0:
+                break
+            err = r.stderr.strip()
+            time.sleep(1.5)
+        else:
+            raise OSError("launchctl could not start the service: " + (err or "unknown error"))
     return f"http://127.0.0.1:{SERVICE_PORT}/"
 
 
@@ -1079,6 +1128,9 @@ class App:
                 return {"ok": True, "count": m.map_everything(self.model)}
             if path == "/api/midi/clear":
                 m.clear()
+                return {"ok": True}
+            if path == "/api/midi/trigger":
+                m.set_trigger(str(body.get("section")), str(body.get("selector")), str(body.get("trigger")))
                 return {"ok": True}
         return {"ok": False, "error": "unknown MIDI request"}
 

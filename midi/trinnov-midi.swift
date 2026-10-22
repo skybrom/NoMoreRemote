@@ -40,40 +40,59 @@ var connected = Set<MIDIEndpointRef>()
 var sourceNames: [MIDIEndpointRef: String] = [:]
 
 /// Reads the MIDI 1.0 messages inside a packet list and prints them.
+/// The packets are walked by hand, straight in the list's memory (copying a packet and stepping on from the
+/// copy reads garbage for every packet after the first). Running status is handled.
 func handle(_ list: UnsafePointer<MIDIPacketList>, port: String) {
-    var packet = list.pointee.packet
-    for _ in 0..<list.pointee.numPackets {
-        let length = Int(packet.length)
-        withUnsafeBytes(of: &packet.data) { raw in
-            var i = 0
-            while i < length {
-                let status = raw[i]
-                if status < 0x80 { i += 1; continue }               // stray data byte
-                let channel = Int(status & 0x0F) + 1
-                switch status & 0xF0 {
-                case 0x80, 0x90:                                    // note off / note on
-                    if i + 2 < length {
-                        let velocity = (status & 0xF0) == 0x80 ? 0 : Int(raw[i + 2])
-                        emit(["type": "note", "channel": channel, "number": Int(raw[i + 1]), "value": velocity, "port": port])
-                    }
-                    i += 3
-                case 0xB0:                                          // control change
-                    if i + 2 < length {
-                        emit(["type": "cc", "channel": channel, "number": Int(raw[i + 1]), "value": Int(raw[i + 2]), "port": port])
-                    }
-                    i += 3
-                case 0xC0:                                          // program change
-                    if i + 1 < length {
-                        emit(["type": "program", "channel": channel, "number": Int(raw[i + 1]), "value": 127, "port": port])
-                    }
-                    i += 2
-                case 0xA0, 0xE0: i += 3                             // aftertouch, pitch bend
-                case 0xD0: i += 2                                   // channel pressure
-                default: i += 1                                     // system and realtime messages
-                }
-            }
+    let raw = UnsafeRawPointer(list)
+    var offset = MemoryLayout<UInt32>.size                              // after numPackets
+    for _ in 0..<Int(list.pointee.numPackets) {
+        let length = Int(raw.loadUnaligned(fromByteOffset: offset + 8, as: UInt16.self))
+        let data = raw.advanced(by: offset + 10).assumingMemoryBound(to: UInt8.self)
+        let bytes = UnsafeBufferPointer(start: data, count: length)
+        parse(bytes, port: port)
+        offset += 10 + length
+        #if arch(arm64) || arch(arm)
+        offset = (offset + 3) & ~3                                      // packets are 4-byte aligned on ARM
+        #endif
+    }
+}
+
+func parse(_ bytes: UnsafeBufferPointer<UInt8>, port: String) {
+    let hex = bytes.map { String(format: "%02X", $0) }.joined()
+    var i = 0
+    var running: UInt8 = 0
+    while i < bytes.count {
+        var status = bytes[i]
+        if status < 0x80 {                                              // data byte: running status
+            if running == 0 { i += 1; continue }
+            status = running
+        } else {
+            i += 1
+            if status < 0xF0 { running = status }
         }
-        packet = MIDIPacketNext(&packet).pointee
+        let channel = Int(status & 0x0F) + 1
+        switch status & 0xF0 {
+        case 0x80, 0x90:
+            if i + 1 < bytes.count {
+                let velocity = (status & 0xF0) == 0x80 ? 0 : Int(bytes[i + 1])
+                emit(["type": "note", "channel": channel, "number": Int(bytes[i]), "value": velocity, "port": port, "raw": hex])
+            }
+            i += 2
+        case 0xB0:
+            if i + 1 < bytes.count {
+                emit(["type": "cc", "channel": channel, "number": Int(bytes[i]), "value": Int(bytes[i + 1]), "port": port, "raw": hex])
+            }
+            i += 2
+        case 0xC0:
+            if i < bytes.count {
+                emit(["type": "program", "channel": channel, "number": Int(bytes[i]), "value": 127, "port": port, "raw": hex])
+            }
+            i += 1
+        case 0xA0, 0xE0: i += 2
+        case 0xD0: i += 1
+        default:                                                        // system / realtime: skip to the next status byte
+            while i < bytes.count && bytes[i] < 0x80 { i += 1 }
+        }
     }
 }
 
@@ -91,7 +110,8 @@ func connectAllSources() {
 
 MIDIClientCreateWithBlock("Trinnov Functions" as CFString, &client) { notification in
     if notification.pointee.messageID == .msgSetupChanged {
-        connectAllSources()                                         // a controller was plugged in
+        connectAllSources()                                         // a controller or plugin appeared
+        emit(["type": "ports", "sources": sourceNames.values.sorted()])
     }
 }
 MIDIInputPortCreateWithBlock(client, "Trinnov Functions in" as CFString, &inPort) { list, refCon in

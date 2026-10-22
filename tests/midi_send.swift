@@ -21,6 +21,16 @@ func bytes(_ words: [String]) -> [UInt8]? {
     }
 }
 
+func sendMulti(_ messages: [[UInt8]], via transmit: (UnsafePointer<MIDIPacketList>) -> Void) {
+    var buffer = [UInt8](repeating: 0, count: 1024)
+    buffer.withUnsafeMutableBytes { raw in
+        let list = raw.baseAddress!.assumingMemoryBound(to: MIDIPacketList.self)
+        var packet = MIDIPacketListInit(list)
+        for m in messages { packet = MIDIPacketListAdd(list, 1024, packet, 0, m.count, m) }
+        transmit(list)
+    }
+}
+
 func send(_ message: [UInt8], via transmit: (UnsafePointer<MIDIPacketList>) -> Void) {
     var buffer = [UInt8](repeating: 0, count: 1024)
     buffer.withUnsafeMutableBytes { raw in
@@ -47,9 +57,17 @@ if mode == "source" {
     var source = MIDIEndpointRef()
     MIDISourceCreate(client, name as CFString, &source)
     Thread.sleep(forTimeInterval: wait)                              // let the helper notice and connect
-    for message in messages {
-        send(message) { MIDIReceived(source, $0) }
-        Thread.sleep(forTimeInterval: 0.3)
+    if ProcessInfo.processInfo.environment["MIDI_SEND_MULTI"] != nil {   // ALL messages in ONE packet list (several packets)
+        sendMulti(messages) { MIDIReceived(source, $0) }
+    } else if ProcessInfo.processInfo.environment["MIDI_SEND_RUNNING"] != nil {   // one packet: status byte once, then data pairs
+        let first = messages[0]
+        let bytes = first + messages.dropFirst().flatMap { Array($0.dropFirst()) }
+        send(bytes) { MIDIReceived(source, $0) }
+    } else {
+        for message in messages {
+            send(message) { MIDIReceived(source, $0) }
+            Thread.sleep(forTimeInterval: 0.3)
+        }
     }
 } else {
     var destination = MIDIEndpointRef()
