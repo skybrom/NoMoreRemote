@@ -38,6 +38,11 @@ var inPort = MIDIPortRef()
 var virtualInput = MIDIEndpointRef()
 var connected = Set<MIDIEndpointRef>()
 var sourceNames: [MIDIEndpointRef: String] = [:]
+let env = ProcessInfo.processInfo.environment
+let portName = env["TRINNOV_MIDI_PORT_NAME"] ?? "Trinnov Functions"         // the test suite uses another name
+let allowTestPorts = env["TRINNOV_MIDI_ALLOW_TEST"] != nil
+
+func uniqueNames() -> [String] { Array(Set(sourceNames.values)).sorted() }
 
 /// Reads the MIDI 1.0 messages inside a packet list and prints them.
 /// The packets are walked by hand, straight in the list's memory (copying a packet and stepping on from the
@@ -97,10 +102,17 @@ func parse(_ bytes: UnsafeBufferPointer<UInt8>, port: String) {
 }
 
 func connectAllSources() {
-    for index in 0..<MIDIGetNumberOfSources() {
-        let source = MIDIGetSource(index)
-        if connected.contains(source) { continue }
-        sourceNames[source] = displayName(source)
+    let present = Set((0..<MIDIGetNumberOfSources()).map { MIDIGetSource($0) })
+    for gone in connected.subtracting(present) {                        // a controller or plugin went away
+        connected.remove(gone)
+        sourceNames[gone] = nil
+    }
+    for source in present where !connected.contains(source) {
+        let name = displayName(source)
+        // ports named trinnov-test-* belong to this project's test suite: a real run never listens to them,
+        // so tests can never trigger anything on a real Nova
+        if name.hasPrefix("trinnov-test-") && !allowTestPorts { continue }
+        sourceNames[source] = name
         let ref = UnsafeMutableRawPointer(bitPattern: Int(source))
         if MIDIPortConnectSource(inPort, source, ref) == noErr {
             connected.insert(source)
@@ -111,16 +123,16 @@ func connectAllSources() {
 MIDIClientCreateWithBlock("Trinnov Functions" as CFString, &client) { notification in
     if notification.pointee.messageID == .msgSetupChanged {
         connectAllSources()                                         // a controller or plugin appeared
-        emit(["type": "ports", "sources": sourceNames.values.sorted()])
+        emit(["type": "ports", "sources": uniqueNames()])
     }
 }
 MIDIInputPortCreateWithBlock(client, "Trinnov Functions in" as CFString, &inPort) { list, refCon in
     let source = MIDIEndpointRef(Int(bitPattern: refCon))
     handle(list, port: sourceNames[source] ?? "unknown")
 }
-MIDIDestinationCreateWithBlock(client, "Trinnov Functions" as CFString, &virtualInput) { list, _ in
-    handle(list, port: "Trinnov Functions (virtual port)")
+MIDIDestinationCreateWithBlock(client, portName as CFString, &virtualInput) { list, _ in
+    handle(list, port: "\(portName) (virtual port)")
 }
 connectAllSources()
-emit(["type": "ready", "sources": sourceNames.values.sorted()])
+emit(["type": "ready", "sources": uniqueNames()])
 RunLoop.main.run()

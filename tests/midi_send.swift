@@ -74,9 +74,9 @@ if mode == "source" {
     for i in 0..<MIDIGetNumberOfDestinations() {
         var n: Unmanaged<CFString>?
         MIDIObjectGetStringProperty(MIDIGetDestination(i), kMIDIPropertyDisplayName, &n)
-        if (n?.takeRetainedValue() as String?) == "Trinnov Functions" { destination = MIDIGetDestination(i) }
+        if (n?.takeRetainedValue() as String?) == (ProcessInfo.processInfo.environment["TRINNOV_MIDI_PORT_NAME"] ?? "Trinnov Functions") { destination = MIDIGetDestination(i) }
     }
-    if destination == 0 { print("no 'Trinnov Functions' destination found"); exit(1) }
+    if destination == 0 { print("no matching destination found"); exit(1) }
     var out = MIDIPortRef()
     MIDIOutputPortCreate(client, "out" as CFString, &out)
     for message in messages {

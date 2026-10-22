@@ -772,7 +772,7 @@ class Midi:
             todo = []
             for b in matches:
                 if not self.is_press(msg["type"], value, b.get("trigger", "press")):
-                    entry["result"] = "release, ignored"
+                    entry["result"] = "release, ignored." + self.zero_velocity_hint(msg, value, entry["raw"])
                     continue
                 now = time.time()
                 if now - self.fired.get(json.dumps(b["msg"]), 0) < 0.2:
@@ -782,6 +782,15 @@ class Midi:
                 todo.append(b)
         for b in todo:
             threading.Thread(target=self._fire, args=(b, entry), daemon=True).start()
+
+    @staticmethod
+    def zero_velocity_hint(msg, value, raw):
+        """A Note On with velocity 0 IS a note off in MIDI. Some Stream Deck buttons send it because their panel
+        shows default values it never saved."""
+        if msg["type"] == "note" and value == 0 and (raw or "")[:1] == "9":
+            return (" This is a Note On with velocity 0, which MIDI treats as a note off. If it was a button press, "
+                    "open the button's settings and give it a velocity above 0.")
+        return ""
 
     @staticmethod
     def is_press(kind, value, trigger):
@@ -794,11 +803,11 @@ class Midi:
         return True if trigger == "any" else value >= 64
 
     def _learn_from(self, msg, value, port, entry):
-        if "DAW" in port:                                   # a controller's DAW port chatters constantly; never learn from it
+        if "daw" in port.lower():                           # a controller's DAW port chatters constantly; never learn from it
             entry["result"] = "ignored while learning (a DAW port)"
             return
         if msg["type"] == "note" and value == 0:
-            entry["result"] = "note off, waiting for the press"
+            entry["result"] = "note off, waiting for the press." + self.zero_velocity_hint(msg, value, entry["raw"])
             return
         # a CC with a low value as the first message means this button's presses can be low: count every value
         trigger = "any" if msg["type"] == "cc" and value < 64 else "press"

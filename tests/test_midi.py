@@ -13,10 +13,11 @@ HOME = tempfile.mkdtemp(prefix="trinnovmidi-")
 BUILD = os.path.join(HOME, "build")
 os.makedirs(BUILD)
 PORT = 8099
-PORTS = "Test Controller,Test DAW Out,Trinnov Functions (virtual port)"
+PORTS = "trinnov-test-controller,trinnov-test-daw-out,trinnov-test-port (virtual port)"
 ENV = {**os.environ, "HOME": HOME, "TRINNOV_IP": "127.0.0.1", "TRINNOV_PORT": str(PORT), "TRINNOV_PREFIXES": "127.0.0",
        "TRINNOV_SUPPORT_DIR": os.path.join(HOME, "support"), "TRINNOV_LAUNCHER_DIR": os.path.join(HOME, "launchers"),
-       "TRINNOV_NO_REVEAL": "1", "TRINNOV_MIDI_BIN": os.path.join(BUILD, "trinnov-midi"), "TRINNOV_MIDI_ONLY_PORT": PORTS}
+       "TRINNOV_NO_REVEAL": "1", "TRINNOV_MIDI_BIN": os.path.join(BUILD, "trinnov-midi"), "TRINNOV_MIDI_ONLY_PORT": PORTS,
+       "TRINNOV_MIDI_PORT_NAME": "trinnov-test-port", "TRINNOV_MIDI_ALLOW_TEST": "1"}
 passed = failed = 0
 procs = []
 
@@ -61,7 +62,7 @@ def token():
     return re.search(r'const TOKEN = "([^"]+)"', urllib.request.urlopen("http://127.0.0.1:8797/").read().decode()).group(1)
 
 
-def send(*args, source="Test Controller", env=None):
+def send(*args, source="trinnov-test-controller", env=None):
     subprocess.run([os.path.join(BUILD, "midi_send"), "source", source, "2", *map(str, args)], capture_output=True, timeout=30,
                    env={**os.environ, **(env or {})})
     time.sleep(0.8)
@@ -99,20 +100,22 @@ try:
     send("note", 1, 99, 100)
     check("an unmapped note does nothing", writes()[n:] == [], writes()[n:])
     n = len(writes())
-    subprocess.run([os.path.join(BUILD, "midi_send"), "dest", "note", "1", str(target["msg"]["number"]), "100"], capture_output=True, timeout=30)
+    subprocess.run([os.path.join(BUILD, "midi_send"), "dest", "note", "1", str(target["msg"]["number"]), "100"], capture_output=True, timeout=30, env=ENV)
     time.sleep(0.8)
-    check("sending to the 'Trinnov Functions' virtual port works too", writes()[n:] == ['/optimizer/preset/current {"id": 3}'], writes()[n:])
+    check("sending to the app's virtual port works too", writes()[n:] == ['/optimizer/preset/current {"id": 3}'], writes()[n:])
 
     # learn
     api("/api/midi/clear", {})
     check("clear removes every mapping", api("/api/midi")["bindings"] == [])
     r = api("/api/midi/learn", {"id": ids["Preset B"]})
     check("learn starts", r["ok"] and api("/api/midi")["learning"]["label"] == "Preset B", r)
-    send("note", 1, 50, 0, source="Test Controller")
+    send("note", 1, 50, 0, source="trinnov-test-controller")
     check("a note off is not learned (it waits for the press)", api("/api/midi")["learning"] is not None and not api("/api/midi")["bindings"])
-    send("note", 1, 50, 100, source="Test DAW Out")
+    last = api("/api/midi")["history"][0]
+    check("a Note On with velocity 0 is explained, with advice for Stream Deck buttons", last["raw"].startswith("90") and "velocity 0" in last["result"] and "settings" in last["result"], last)
+    send("note", 1, 50, 100, source="trinnov-test-daw-out")
     check("a controller's DAW port is never learned from", api("/api/midi")["learning"] is not None and not api("/api/midi")["bindings"])
-    send("cc", 2, 20, 127, source="Test Controller")
+    send("cc", 2, 20, 127, source="trinnov-test-controller")
     m = api("/api/midi")
     check("a CC press is learned", m["learning"] is None and m["bindings"] and m["bindings"][0]["msg"] == {"type": "cc", "channel": 2, "number": 20}, m)
     n = len(writes())

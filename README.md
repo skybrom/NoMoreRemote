@@ -77,7 +77,7 @@ Every function can be mapped to a MIDI message, so a MIDI controller, a Stream D
 - **Needs the Swift compiler** (part of Apple's developer tools, already needed for Python on most Macs): the first start builds a small helper (`midi/trinnov-midi.swift`) for a few seconds.
 - MIDI works while the app or the background service is running, so the **service** is the way to use it day to day.
 
-**A Stream Deck with MIDI:** the Stream Deck app has no MIDI output of its own, so use a MIDI plugin from Elgato's marketplace (for example *Midi Button*). Such plugins usually create their own MIDI port (the app hears it by itself, whatever its name) or send to a port you choose: pick **Trinnov Functions** to send straight here. Use the plugin's plain **MIDI Note** or **MIDI CC** action for a normal button; its *Toggle* actions alternate values and need the *every value* option above.
+**A Stream Deck with MIDI:** the Stream Deck app has no MIDI output of its own, so use a MIDI plugin from Elgato's marketplace (for example *Midi Button*). Such plugins usually create their own MIDI port (the app hears it by itself, whatever its name) or send to a port you choose: pick **Trinnov Functions** to send straight here. Use the plugin's plain **MIDI Note** or **MIDI CC** action for a normal button; its *Toggle* actions alternate values and need the *every value* option above. **Set the values yourself:** a freshly dragged Midi Button shows default values (note 0, velocity 1) in its panel but has not saved them, so it actually sends **velocity 0**, which MIDI treats as a note off. Click into each field and type the note and velocity (for example note 36, velocity 100) so Stream Deck stores them; the MIDI window tells you when it sees this.
 
 ## The `trinnov` command
 
