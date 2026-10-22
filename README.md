@@ -1,4 +1,4 @@
-# Trinnov Functions
+# Trinnov Functions (NoMoreRemote)
 
 Every function of **La Remote**, from your Mac, **without La Remote**: Common, Presets, Processing, Downmix, Monitoring, Sources, Speaker Sets, Speaker Tools, Power, in the same layout and colours as the Nova's own interface.
 
@@ -6,12 +6,13 @@ Every function of **La Remote**, from your Mac, **without La Remote**: Common, P
 
 ## Run it
 
-1. Download this folder.
-2. Double-click **`Trinnov Functions.command`** (if macOS blocks it: right-click → **Open** → **Open**).
-   - Your browser opens the app. Close the Terminal window, or click **Quit** in the app, to stop it.
-3. Optional: double-click **`Make App.command`** once to get **`Trinnov Functions.app`**, a double-click app without a Terminal window. Keep it in this folder.
+**The app (recommended).** Download **`Trinnov Functions.zip`** from the project's Releases page (or build it yourself: double-click **`Make App.command`**, needs Apple's developer tools for the Swift compiler), unzip it and drag **Trinnov Functions.app** to Applications.
 
-Needs macOS with Python 3 (macOS offers to install Apple's developer tools the first time if it is missing). No installation, no password, nothing is written outside this folder except a remembered Nova address in `~/Library/Application Support/TrinnovFunctions`.
+- The first time, macOS blocks apps that are not from the App Store: right-click the app → **Open** → **Open**.
+- It is **one self-contained app**: it puts an icon in the menu bar with just **Settings…** and **Quit**, and Settings opens the window (Favourites and every function as tiles). On first start it installs its background engine by itself (no password), so MIDI, the `trinnov` command and the Stream Deck launchers keep working after you quit the app and at every login.
+- Needs macOS 13 or later and Python 3 (macOS offers to install Apple's developer tools the first time if it is missing).
+
+**Without the app.** Double-click **`Trinnov Functions.command`** (right-click → **Open** the first time). Your browser opens the same functions as a web page; close the Terminal window or click **Quit** to stop it. Nothing is written outside this folder except a remembered Nova address in `~/Library/Application Support/TrinnovFunctions`.
 
 **Recommended: install the background service.** Double-click **`Install Background Service.command`** once (no password). It keeps Trinnov Functions running from every login, so MIDI, the `trinnov` command and the Stream Deck launchers work without opening anything. The app is then always at **http://127.0.0.1:47633/**. `Uninstall Background Service.command` removes it. If the service is running, `Trinnov Functions.command` just opens it instead of starting a second copy.
 
@@ -58,7 +59,11 @@ Hover a tile and click **+ Deck**, or use **Stream Deck…** in the header → *
 - **If a key does nothing**, read `~/Library/Logs/TrinnovLaunchers.log`: it has one line when the launcher opens, one when the command starts, and one with the result or the error.
 - Launchers act on the live Nova, with no Read-only switch. Click **Make all launchers** again after you change your setup.
 
-### Why not drag a tile from the page?
+**In the native app you can also drag a tile straight onto the Stream Deck app**: pick the function's tile (for example Bypass) and drag it onto a key. The app makes that function's launcher the first time you point at the tile, and the drag hands it over exactly like a drag from Finder. A plain click still presses the tile.
+
+**Favourites, right-click, log (native app):** the first page is **Favourites**, and it is the page that opens at start. Point at a tile and click its star (or right-click → *Add to Favourites*) and it appears there. Right-click a tile for: Add/Remove Favourite, **Show launcher in Finder**, Map to MIDI…, **Delete MIDI mapping**. The log on the right reads in plain words (*Bypass: ON*, *Presets: Preset C*, *Volume +2 dB*); **Show log** adds the exact message sent to the Nova under each line.
+
+### Why not drag a tile from the web page?
 
 The Stream Deck app does not accept a link dragged from a web page, so the dependable way is the one above: drag the launcher app from Finder. (`trinnov://` is also the Trinnov app's own link scheme, so this project deliberately registers no links of its own.)
 

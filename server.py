@@ -565,10 +565,12 @@ class Model:
         if it["type"] == "toggle-preset":
             if self.prev_preset is None:
                 raise ValueError("no previous preset known yet: pick a preset first")
-            return "/optimizer/preset/current", {"id": self.prev_preset}, f"back to preset {self.prev_preset}"
+            return "/optimizer/preset/current", {"id": self.prev_preset}, "Presets: back to the previous preset"
         if it["type"] == "volume-step":
-            return "/optimizer/volume", {"dvolume": it["delta"]}, f"{it['label']} ({it['delta']:+g} dB)"
+            return "/optimizer/volume", {"dvolume": it["delta"]}, f"Volume {it['delta']:+g} dB"
         path, want = it["path"], it["value"]
+        section = next((x["title"] for x in self.sections if x["key"] == iid.split(":")[0]), "")
+        choice = f"{section}: {it['label']}" if section and section != it["label"] else it["label"]
         parent, key = path.rsplit("/", 1)
         cur = self.link.read(path)
         if cur == {} and not it.get("momentary"):
@@ -578,7 +580,7 @@ class Model:
         if path == "/monitoring/control/main_selected_sources":
             # Like the Nova's own Sources page and La Remote: send just the source number. In Sum mode
             # the Nova itself adds it to / removes it from the selection; in Toggle mode it replaces it.
-            return parent, {key: want}, f"source {want}"
+            return parent, {key: want}, choice
         if it["type"] == "boolean":
             if it.get("momentary") or cur is None:
                 new = want
@@ -586,10 +588,10 @@ class Model:
                 new = not bool(cur)
             else:
                 new = want
-            return parent, {key: new}, f"{it['label']} = {new}"
+            return parent, {key: new}, f"{it['label']}: {'ON' if new else 'OFF'}"
         if it["type"] == "symbol":
-            return parent, {key: f"SYM('{sym(want)}')"}, f"{it['label']}"
-        return parent, {key: want}, f"{it['label']}"
+            return parent, {key: f"SYM('{sym(want)}')"}, choice
+        return parent, {key: want}, choice
 
 
 # ------------------------------------------------------------------ Stream Deck launchers
@@ -958,11 +960,13 @@ class GuardedLink:
         return self.app.link.read_many(paths, timeout)
 
     def write(self, path, obj):
+        what = self.app.command_label or "Command"
+        raw = f"{path} <- {json.dumps(obj)}"
         if self.app.read_only:
-            self.app.note("blocked", f"Read-only mode: not sent: {path} <- {json.dumps(obj)}")
+            self.app.note("blocked", f"Read-only: not sent: {what}", raw)
             raise ReadOnlyError("Read-only mode is on: nothing was sent.")
         self.app.link.write(path, obj)
-        self.app.note("sent", f"{path} <- {json.dumps(obj)}")
+        self.app.note("sent", what, raw)
 
     def close(self):
         pass
@@ -978,6 +982,7 @@ class App:
         self.model = None
         self.error = None
         self.log = []
+        self.command_label = ""
         self.nova_ip = None
         self.last_try = 0.0
         self.epoch = 0
@@ -985,8 +990,9 @@ class App:
         self.service = False
         self.stop = threading.Event()
 
-    def note(self, kind, text):
-        self.log.append({"t": time.strftime("%H:%M:%S"), "kind": kind, "text": text})
+    def note(self, kind, text, detail=None):
+        """`text` is the readable line; `detail` is the technical message behind it (shown by 'Show log')."""
+        self.log.append({"t": time.strftime("%H:%M:%S"), "kind": kind, "text": text, "detail": detail})
         del self.log[:-60]
 
     def connect(self):
@@ -1045,11 +1051,12 @@ class App:
             return st
 
     def write(self, path, payload, what):
+        raw = f"{path} <- {json.dumps(payload)}"
         if self.read_only:
-            self.note("blocked", f"Read-only mode: not sent: {path} <- {json.dumps(payload)}")
+            self.note("blocked", f"Read-only: not sent: {what}", raw)
             return {"ok": False, "error": "Read-only mode is on: nothing was sent."}
         self.link.write(path, payload)
-        self.note("sent", f"{what}: {path} <- {json.dumps(payload)}")
+        self.note("sent", what, raw)
         return {"ok": True, "sent": {"path": path, "payload": payload}}
 
     def press(self, iid, confirmed):
@@ -1100,7 +1107,7 @@ class App:
                     args = trinnov.parse_args(argv)
             except SystemExit:
                 return {"code": 2, "output": "Trinnov: wrong arguments"}
-            self.note("info", "command: trinnov " + " ".join(argv))
+            self.command_label = "Command: " + " ".join(argv)
             try:
                 return {"code": 0, "output": trinnov.run(args, ctx=(GuardedLink(self), self.model))}
             except trinnov.Fail as e:
@@ -1109,6 +1116,8 @@ class App:
                 return {"code": 1, "output": f"Trinnov: {e}"}
             except Exception as e:                                       # noqa: BLE001
                 return {"code": 1, "output": f"Trinnov: unexpected problem ({type(e).__name__}: {e})"}
+            finally:
+                self.command_label = ""
 
     def midi_api(self, path, body):
         m = self.midi
@@ -1175,7 +1184,7 @@ class App:
             if not self.ready():
                 return {"ok": False, "error": "Not connected"}
             cur = self.link.read("/optimizer/volume/mute")
-            return self.write("/optimizer/volume", {"mute": not bool(cur)}, "Mute")
+            return self.write("/optimizer/volume", {"mute": not bool(cur)}, "Mute: " + ("OFF" if cur else "ON"))
 
 
 class Handler(BaseHTTPRequestHandler):
