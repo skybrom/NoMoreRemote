@@ -6,7 +6,7 @@ Every function of **La Remote**, from your Mac, **without La Remote**: Common, P
 
 ## Run it
 
-**The app (recommended).** Download **`Trinnov Functions.zip`** from the project's Releases page (or build it yourself: double-click **`Make App.command`**, needs Apple's developer tools for the Swift compiler), unzip it and drag **Trinnov Functions.app** to Applications.
+**The app (recommended).** Download **`Trinnov.Functions.zip`** from the project's [Releases page](https://github.com/skybrom/NoMoreRemote/releases/latest) (or build it yourself: double-click **`Make App.command`**, needs Apple's developer tools for the Swift compiler), unzip it and drag **Trinnov Functions.app** to Applications.
 
 - The first time, macOS blocks apps that are not from the App Store: right-click the app → **Open** → **Open**.
 - It is **one self-contained app**: it puts an icon in the menu bar with just **Settings…** and **Quit**, and Settings opens the window (Favourites and every function as tiles). On first start it installs its background engine by itself (no password), so MIDI, the `trinnov` command and the Stream Deck launchers keep working after you quit the app and at every login.
