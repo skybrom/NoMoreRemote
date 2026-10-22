@@ -461,9 +461,27 @@ struct AppSettingsSheet: View {
     @AppStorage("showWindowAtLaunch") private var showWindowAtLaunch = true
     @State private var loginEnabled = SMAppService.mainApp.status == .enabled
     @State private var loginError: String?
+    @StateObject private var autoOff = AutoOff.shared
 
     var body: some View {
         SheetFrame(title: "App settings") {
+            Text("Trinnov shutdown").font(.system(size: 13, weight: .semibold))
+            HStack(spacing: 8) {
+                Toggle("Automatically shut down the Trinnov when this Mac turns off", isOn: Binding(get: { autoOff.installed }, set: { autoOff.setEnabled($0) }))
+                    .disabled(autoOff.busy)
+                if autoOff.busy { ProgressView().controlSize(.small) }
+            }
+            Text("Also when it restarts or logs out. Turning it on asks for your Mac password once, to install a small system helper (macOS cuts programs off from the network early in a restart).")
+                .font(.system(size: 12)).foregroundColor(Theme.legend)
+            if autoOff.installed && !autoOff.upToDate {
+                HStack {
+                    Text("A newer version of the helper is available.").font(.system(size: 12)).foregroundColor(Theme.warn)
+                    Button("Update") { autoOff.update() }.buttonStyle(FlatButtonStyle()).disabled(autoOff.busy)
+                }
+            }
+            if let m = autoOff.message { Text(m).font(.system(size: 12)).foregroundColor(Theme.warn) }
+            if autoOff.installed, let last = autoOff.lastEvent { Text("Last: \(last)").font(.system(size: 11, design: .monospaced)).foregroundColor(Theme.legend) }
+            Divider()
             Toggle("Open this app at login (so the menu bar icon is always there)", isOn: Binding(get: { loginEnabled }, set: { setLogin($0) }))
             if let e = loginError { Text(e).font(.system(size: 12)).foregroundColor(Theme.warn) }
             Toggle("Show this window when the app starts", isOn: $showWindowAtLaunch)

@@ -6,7 +6,7 @@ set -e
 cd "$(dirname "$0")/.."
 OUT="${1:-$PWD/Trinnov Functions.app}"
 rm -rf "${OUT:?}"
-mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources/engine/data" "$OUT/Contents/Resources/engine/ui" "$OUT/Contents/Resources/engine/midi"
+mkdir -p "$OUT/Contents/Resources/autooff" "$OUT/Contents/MacOS" "$OUT/Contents/Resources/engine/data" "$OUT/Contents/Resources/engine/ui" "$OUT/Contents/Resources/engine/midi"
 
 echo "Compiling the app..."
 swiftc -O -parse-as-library -swift-version 5 -target "$(uname -m)-apple-macos13.0" app/*.swift -o "$OUT/Contents/MacOS/TrinnovFunctions"
@@ -20,6 +20,8 @@ echo "Adding the engine and the MIDI helper..."
 for f in server.py trinnov.py data/functions_tree.json ui/index.html midi/trinnov-midi.swift; do
   cp "$f" "$OUT/Contents/Resources/engine/$f"
 done
+
+cp autooff/install.sh autooff/uninstall.sh autooff/askpass.sh "$OUT/Contents/Resources/autooff/"
 
 cat > "$OUT/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
