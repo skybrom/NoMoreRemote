@@ -2,8 +2,25 @@
 # Installs "Trinnov Auto Shutdown": when this Mac shuts down, restarts or logs out,
 # it powers off the Trinnov Nova on the network. No configuration needed.
 # Copy of the Trinnov Auto Shutdown installer, run by the Trinnov Functions app (Settings). The only change:
-# when SUDO_ASKPASS is set (the app sets it) the password is asked in a macOS dialog instead of the Terminal.
-SUDO="sudo"; [ -n "$SUDO_ASKPASS" ] && SUDO="sudo -A"
+# the administrator step uses macOS's own prompt when TRINNOV_NATIVE_AUTH is set (the app sets it).
+# Runs the script on stdin as root. From the app (TRINNOV_NATIVE_AUTH set) macOS shows its own standard
+# administrator prompt (with Touch ID); from the Terminal it is a normal sudo.
+run_root() {
+  if [ -n "$TRINNOV_NATIVE_AUTH" ]; then
+    local tmp rc; tmp="$(mktemp -t trinnovroot)"; cat > "$tmp"
+    /usr/bin/osascript - "$tmp" "$@" <<'OSAEOF'
+on run argv
+	set cmd to "/bin/bash " & quoted form of (item 1 of argv)
+	repeat with i from 2 to count of argv
+		set cmd to cmd & " " & quoted form of (item i of argv)
+	end repeat
+	do shell script cmd with prompt "Trinnov Functions wants to change the Trinnov shutdown helper." with administrator privileges
+end run
+OSAEOF
+    rc=$?; rm -f "$tmp"; return $rc
+  fi
+  sudo /bin/bash -s "$@"
+}
 set -e
 SUPPORT="$HOME/Library/Application Support/TrinnovAutoShutdown"
 LABEL="com.trinnov.autoshutdown"
@@ -330,7 +347,7 @@ PEOF
 echo
 echo "An administrator password is needed once, to install the system helper that"
 echo "does the actual shutdown (macOS cuts user programs off from the network at restart)."
-if $SUDO /bin/bash -s "$SUPPORT" <<'ROOTEOF'
+if run_root "$SUPPORT" <<'ROOTEOF'
 SRC="$1"; DEST="/Library/Application Support/TrinnovAutoShutdown"; DL="com.trinnov.autoshutdown.daemon"
 launchctl kill SIGKILL "system/$DL" 2>/dev/null || true
 launchctl bootout "system/$DL" 2>/dev/null || true

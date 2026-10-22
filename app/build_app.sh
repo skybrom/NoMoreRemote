@@ -21,7 +21,7 @@ for f in server.py trinnov.py data/functions_tree.json ui/index.html midi/trinno
   cp "$f" "$OUT/Contents/Resources/engine/$f"
 done
 
-cp autooff/install.sh autooff/uninstall.sh autooff/askpass.sh "$OUT/Contents/Resources/autooff/"
+cp autooff/install.sh autooff/uninstall.sh "$OUT/Contents/Resources/autooff/"
 
 cat > "$OUT/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

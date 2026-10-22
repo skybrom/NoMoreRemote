@@ -48,13 +48,12 @@ final class AutoOff: ObservableObject {
         busy = true
         message = nil
         let script = dir.appendingPathComponent(name).path
-        let askpass = dir.appendingPathComponent("askpass.sh").path
         Task.detached {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/bin/bash")
             p.arguments = [script]
             var env = ProcessInfo.processInfo.environment
-            env["SUDO_ASKPASS"] = askpass
+            env["TRINNOV_NATIVE_AUTH"] = "1"
             p.environment = env
             let pipe = Pipe()
             p.standardOutput = pipe
@@ -73,7 +72,7 @@ final class AutoOff: ObservableObject {
                 self.refresh()
                 let tail = finalOutput.split(separator: "\n").suffix(3).joined(separator: " ")
                 if finalCode != 0 || (name == "install.sh" && !self.installed) || (name == "uninstall.sh" && self.installed) {
-                    self.message = tail.contains("password") || tail.contains("sudo") || tail.contains("WARNING")
+                    self.message = tail.contains("not installed") || tail.contains("NOT removed") || tail.contains("User canceled")
                         ? "It was not set up: the password was cancelled or refused. \(tail)" : "It did not finish. \(tail)"
                 }
             }
