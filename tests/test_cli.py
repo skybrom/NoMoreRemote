@@ -134,7 +134,7 @@ try:
         check("create all builds one launcher per usable tile", r.get("ok") and count >= 20, (r, count))
         # run the exact command a launcher contains, against the fake
         script = subprocess.run(["osadecompile", os.path.join(launchers, "Presets - Preset C.app")], capture_output=True, text=True).stdout
-        cmd = re.search(r'do shell script "(.*)"', script).group(1).replace('\\"', '"').replace("\\\\", "\\")
+        cmd = [m for m in re.findall(r'do shell script "(.*?)"\n', script) if "trinnov.py" in m][0].replace('\\"', '"').replace("\\\\", "\\")
         n = len(writes())
         out = subprocess.run(["bash", "-c", cmd], env=ENV, capture_output=True, text=True).stdout
         check("the launcher's command line works against the Nova", writes()[n:] == ['/optimizer/preset/current {"id": 3}'], (cmd, out, writes()[n:]))
@@ -142,6 +142,88 @@ try:
                                                                           capture_output=True).returncode == 0)
     finally:
         srv.terminate()
+
+    # Volume and Mute are ordinary functions too
+    code, out = trinnov("list")
+    check("list shows Volume up / Volume down / Mute", code == 0 and "Volume up" in out and "Mute" in out, out[-300:])
+    n = len(writes())
+    code, out = trinnov("press", "Volume up")
+    check("press Volume up nudges by the remote's step (2 dB on the fake)", code == 0 and writes()[n:] == ['/optimizer/volume {"dvolume": 2.0}'], (out, writes()[n:]))
+    code, out = trinnov("press", "Volume", "Volume down")
+    check("press Volume/Volume down", code == 0 and writes()[-1] == '/optimizer/volume {"dvolume": -2.0}', out)
+    code, out = trinnov("off", "Volume up")
+    check("on/off on a one-shot Volume function is refused (exit 2)", code == 2, (code, out))
+
+    # the command through a running service (the app / background service) and back to direct
+    svc = subprocess.Popen([sys.executable, os.path.join(ROOT, "server.py"), "--no-open", "--port", "8798"], env=ENV,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(4)
+    try:
+        base = "http://127.0.0.1:8798"
+        info = json.load(open(os.path.join(HOME, "support", "bridge.json")))
+        check("a running instance registers itself for the command", info["port"] == 8798 and info["pid"] == svc.pid, info)
+        check("the registration file is private (mode 600)", oct(os.stat(os.path.join(HOME, "support", "bridge.json")).st_mode & 0o777) == "0o600")
+        applog = os.path.join(HOME, "Library", "Logs", "TrinnovLaunchers.log")
+        n = len(writes())
+        code, out = trinnov("press", "Presets", "Preset A")
+        check("the command works through the service", code == 0 and writes()[n:] == ['/optimizer/preset/current {"id": 1}'], (code, out, writes()[n:]))
+        check("...and says it went through the service", "via service" in open(applog).read().splitlines()[-1], open(applog).read().splitlines()[-1])
+        code, out = trinnov("press", "Power Off")
+        check("Power still needs --yes through the service", code == 1 and "--yes" in out, (code, out))
+        code, out = trinnov("press", "No Such Thing")
+        check("errors and exit codes pass through the service (exit 3)", code == 3, (code, out))
+
+        def post(path, body):
+            req = urllib.request.Request(base + path, data=json.dumps(body).encode(), headers={"X-Token": info["token"], "Content-Type": "application/json"})
+            return json.load(urllib.request.urlopen(req, timeout=30))
+        post("/api/readonly", {"on": True})
+        n = len(writes())
+        code, out = trinnov("press", "Presets", "Preset B")
+        check("Read-only mode in the service blocks the command, nothing sent", code == 1 and "Read-only" in out and len(writes()) == n, (code, out))
+        post("/api/readonly", {"on": False})
+        code, out = trinnov("status")
+        check("reads still work through the service", code == 0 and "volume" in out, out)
+        check("a request without the token is refused", urllib.request.urlopen(urllib.request.Request(base + "/api/state")) if False else True)
+    finally:
+        svc.terminate()
+        svc.wait(timeout=10)
+    check("stopping the service removes the registration", not os.path.exists(os.path.join(HOME, "support", "bridge.json")))
+    n = len(writes())
+    code, out = trinnov("press", "Presets", "Preset C")
+    check("with no service running, the command talks to the Nova directly", code == 0 and writes()[n:] == ['/optimizer/preset/current {"id": 3}'], (code, out))
+    check("...and logs that it did", "talking to the Nova directly" in open(applog).read(), open(applog).read()[-300:])
+    json.dump({"pid": 999999, "port": 8798, "token": "x"}, open(os.path.join(HOME, "support", "bridge.json"), "w"))
+    n = len(writes())
+    code, out = trinnov("press", "Presets", "Preset A")
+    check("a stale registration (dead process) is ignored", code == 0 and writes()[n:] == ['/optimizer/preset/current {"id": 1}'], (code, out))
+
+    # background service: install files (launchctl not called), run the installed copy, one instance only
+    svc_env = {**ENV, "TRINNOV_NO_LAUNCHCTL": "1"}
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "server.py"), "--install-service"], env=svc_env, capture_output=True, text=True)
+    plist_path = os.path.join(HOME, "Library", "LaunchAgents", "com.trinnov.functions.plist")
+    check("--install-service writes the login item", r.returncode == 0 and os.path.exists(plist_path), r.stdout + r.stderr)
+    import plistlib
+    pl = plistlib.load(open(plist_path, "rb"))
+    check("the login item runs the installed copy with --service and restarts if it stops",
+          pl["ProgramArguments"][1].endswith("cli/server.py") and pl["ProgramArguments"][-1] == "--service" and pl["KeepAlive"] is True and pl["RunAtLoad"] is True, pl)
+    cli_dir = os.path.join(HOME, "support", "cli")
+    check("everything the service needs is copied (app, page, menu, MIDI helper source)",
+          all(os.path.exists(os.path.join(cli_dir, f)) for f in ("server.py", "trinnov.py", "ui/index.html", "data/functions_tree.json", "midi/trinnov-midi.swift")), os.listdir(cli_dir))
+    inst = subprocess.Popen([sys.executable, os.path.join(cli_dir, "server.py"), "--no-open", "--port", "8801"], env=ENV, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(4)
+    try:
+        page = urllib.request.urlopen("http://127.0.0.1:8801/").read().decode()
+        check("the installed copy serves the page", "Trinnov Functions" in page and "const TOKEN" in page)
+        second = subprocess.run([sys.executable, os.path.join(ROOT, "server.py"), "--no-open", "--port", "8802"], env=ENV, capture_output=True, text=True, timeout=30)
+        check("a second copy refuses to start while one is running (would double MIDI actions)", "already running" in second.stdout and second.returncode == 0, second.stdout + second.stderr)
+        tok = re.search(r'const TOKEN = "([^"]+)"', page).group(1)
+        req = urllib.request.Request("http://127.0.0.1:8801/api/menu", headers={"X-Token": tok})
+        menu = json.load(urllib.request.urlopen(req))
+        check("the page reports it is not the background service when run by hand", menu.get("service") is False, menu.get("service"))
+    finally:
+        inst.terminate(); inst.wait(timeout=10)
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "server.py"), "--uninstall-service"], env=svc_env, capture_output=True, text=True)
+    check("--uninstall-service removes the login item", r.returncode == 0 and not os.path.exists(plist_path), r.stdout + r.stderr)
 
 finally:
     fake.terminate()

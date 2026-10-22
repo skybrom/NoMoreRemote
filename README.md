@@ -13,6 +13,8 @@ Every function of **La Remote**, from your Mac, **without La Remote**: Common, P
 
 Needs macOS with Python 3 (macOS offers to install Apple's developer tools the first time if it is missing). No installation, no password, nothing is written outside this folder except a remembered Nova address in `~/Library/Application Support/TrinnovFunctions`.
 
+**Recommended: install the background service.** Double-click **`Install Background Service.command`** once (no password). It keeps Trinnov Functions running from every login, so MIDI, the `trinnov` command and the Stream Deck launchers work without opening anything. The app is then always at **http://127.0.0.1:47633/**. `Uninstall Background Service.command` removes it. If the service is running, `Trinnov Functions.command` just opens it instead of starting a second copy.
+
 Options (add after the command in Terminal): `--read-only` (never send anything), `--ip 192.168.1.50` (skip the search), `--no-open`.
 
 ## It reads **your** Nova
@@ -51,11 +53,29 @@ Hover a tile and click **+ Deck**, or use **Stream Deck…** in the header → *
 - **Power Off and Reboot** launchers always show a confirmation dialog first. Network entries have no launcher.
 - Launchers look functions up **by name on your Nova**, so they keep working when presets or sources are added. If you rename a preset, make its launcher again.
 - They run a copy of the command line kept in `~/Library/Application Support/TrinnovFunctions/cli`, so they keep working if you move this folder.
+- **How they run:** if the background service (or the open app) is running, a launcher hands the work to it over your Mac's internal loopback, so it behaves the same however Stream Deck started it. Without it, a launcher talks to the Nova directly.
+- **Feedback:** a soft *Tink* sound on success and a *Basso* on failure, plus a macOS notification (macOS may hide those for apps started by Stream Deck, so the sound is the reliable sign). Switch the sounds off by creating an empty file `~/Library/Application Support/TrinnovFunctions/sounds_off`.
+- **If a key does nothing**, read `~/Library/Logs/TrinnovLaunchers.log`: it has one line when the launcher opens, one when the command starts, and one with the result or the error.
 - Launchers act on the live Nova, with no Read-only switch. Click **Make all launchers** again after you change your setup.
 
 ### Why not drag a tile from the page?
 
 The Stream Deck app does not accept a link dragged from a web page, so the dependable way is the one above: drag the launcher app from Finder. (`trinnov://` is also the Trinnov app's own link scheme, so this project deliberately registers no links of its own.)
+
+## MIDI: control the Nova from any controller or from a Stream Deck
+
+Every function can be mapped to a MIDI message, so a MIDI controller, a Stream Deck MIDI plugin, or any app that sends MIDI can run it.
+
+- **Where to send:** to the virtual port **Trinnov Functions** (it appears in any MIDI app by itself), or from a controller already connected to this Mac (the app listens to every MIDI input, including ones plugged in later and IAC Driver buses).
+- **What counts as a button press:** a **note on**, a **program change**, or a **CC of 64 or more**. A note off, or a CC below 64, is the release and is ignored. A CC that sends `127` on every press and nothing on release works too.
+- **Map one function (learn):** hover its tile, click **MIDI**, then press the key on your controller. The tile then shows a badge like `N40`. Messages from a controller's *DAW* port are never learned (those ports chatter all the time).
+- **Map everything at once:** **MIDI…** in the header → **Map every function automatically** gives each function one note, in menu order, on channel 1, starting at note 36. The window lists the table, so you can set up a Stream Deck from it.
+- **Volume and Mute** are functions too (the *Volume* section), so a button can nudge the level or mute.
+- **Safety:** Power Off and Reboot **cannot be mapped** (a stray note would switch the Nova off). The Read-only switch blocks MIDI as well. Mappings are saved in `~/Library/Application Support/TrinnovFunctions/midi_map.json`.
+- **Needs the Swift compiler** (part of Apple's developer tools, already needed for Python on most Macs): the first start builds a small helper (`midi/trinnov-midi.swift`) for a few seconds.
+- MIDI works while the app or the background service is running, so the **service** is the way to use it day to day.
+
+**A Stream Deck with MIDI:** the Stream Deck app has no MIDI output of its own, so install a MIDI plugin from Elgato's marketplace, choose **Trinnov Functions** as its output port, and send the notes from the table above.
 
 ## The `trinnov` command
 
@@ -82,7 +102,7 @@ Names match any part of the label, in any case. If more than one thing matches, 
 
 Tested on one Nova: **firmware 5.3.0pre3, macOS 26.** The menu building and the live state were checked against that real Nova **in read-only mode**. **Writes were tested only against a fake Nova** (`tests/fake_nova.py`), which confirms the app sends what it should, not that a real Nova reacts as expected. Other Trinnov products (Altitude, D-MON, …) use a different interface and are **untested**.
 
-Run the tests (fake Nova only, nothing can reach a real one): `python3 tests/test_cli.py`.
+Run the tests (fake Nova and fake MIDI controllers only, nothing can reach a real Nova): `python3 tests/test_cli.py` (command, launchers, service) and `python3 tests/test_midi.py` (MIDI, needs the Swift compiler).
 
 Try the fake Nova yourself, without hardware:
 

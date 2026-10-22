@@ -11,13 +11,13 @@
     trinnov mute [on|off|toggle]
 
 NAME can be any part of the label, in any case, or #N for a numbered item (see `trinnov list`).
-Options: --ip ADDRESS, --json, --dry-run (show what would be sent), --yes (needed for Power),
+Options: --ip ADDRESS, --json, --dry-run (show what would be sent), --yes (needed for Power), --no-service,
          --refresh (re-read the function list from the Nova).
 
 Exit code: 0 done, 1 failed, 2 wrong usage, 3 name not found or ambiguous.
 The Nova is found on your network automatically; the menu is read from that Nova.
 """
-import argparse, json, os, re, sys, time, unicodedata
+import argparse, contextlib, io, json, os, re, sys, time, unicodedata, urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import server  # noqa: E402  (same folder: the engine behind the app)
@@ -32,6 +32,19 @@ SECTION_WORDS = {"preset": "presets", "presets": "presets", "source": "sources",
                  "tools": "speaker tools", "speakertools": "speaker tools", "processing": "processing",
                  "runtime": "processing", "monitoring": "monitoring", "common": "common", "power": "power",
                  "network": "network", "sendsources": "send sources"}
+
+
+LAUNCH_LOG = os.path.expanduser("~/Library/Logs/TrinnovLaunchers.log")
+
+
+def log(message):
+    """Every run leaves a line, so a key press that 'does nothing' can be diagnosed."""
+    try:
+        os.makedirs(os.path.dirname(LAUNCH_LOG), exist_ok=True)
+        with open(LAUNCH_LOG, "a") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + message + "\n")
+    except OSError:
+        pass
 
 
 class Fail(Exception):
@@ -101,7 +114,7 @@ def find(model, words):
     query = " ".join(words[1:] if sec else words)
     pool = [(s, i) for s in ([sec] if sec else model.sections) for i in s["items"]]
     q = norm(query)
-    tiers = [lambda i: norm(i["label"]) == q or (i.get("sub") and norm(i["sub"]) == q),
+    tiers = [lambda i: norm(i["label"]) == q or (str(i.get("sub") or "").startswith("#") and norm(i["sub"]) == q),
              lambda i: norm(i["label"]).startswith(q),
              lambda i: q in norm(i["label"])]
     for test in tiers:
@@ -229,9 +242,11 @@ def cmd_mute(args, link, model, mode):
     return f"Mute: {'on' if link.read('/optimizer/volume/mute') else 'off'}"
 
 
-def run(args):
+def run(args, ctx=None):
+    """Run one command. Inside the background service, ctx=(link, model) is its own live connection."""
     words, cmd = args.words, args.command
-    link, model = connect(args)
+    own = ctx is None
+    link, model = ctx if ctx else connect(args)
     try:
         if cmd == "list":
             return cmd_list(args, link, model)
@@ -260,13 +275,18 @@ def run(args):
             return act(args, link, model, s, it, "press" if cmd == "toggle" else cmd)
         raise Fail("Unknown command", 2)
     finally:
-        link.close()
+        if own:
+            link.close()
 
 
-def main():
+COMMANDS = ["list", "status", "press", "on", "off", "toggle", "preset", "source", "speakerset", "downmix",
+            "snapshot", "volume", "mute"]
+BRIDGE_FILE = os.path.join(SUPPORT, "bridge.json")
+
+
+def parse_args(argv):
     ap = argparse.ArgumentParser(prog="trinnov", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["list", "status", "press", "on", "off", "toggle", "preset", "source",
-                                        "speakerset", "downmix", "snapshot", "volume", "mute"])
+    ap.add_argument("command", choices=COMMANDS)
     ap.add_argument("words", nargs="*")
     ap.add_argument("--ip")
     ap.add_argument("--json", action="store_true")
@@ -274,14 +294,54 @@ def main():
     ap.add_argument("--yes", action="store_true")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--refresh", action="store_true")
-    args = ap.parse_args()
+    ap.add_argument("--no-service", action="store_true", help="talk to the Nova directly even if the background service runs")
+    return ap.parse_args(argv)
+
+
+def via_service(argv):
+    """If the background service (or the open app) is running, let it do the work over loopback: it already
+    holds the connection, so this works the same however this command was launched. Returns (code, output) or None."""
     try:
-        print(run(args))
+        info = json.load(open(BRIDGE_FILE))
+        os.kill(info["pid"], 0)
+        req = urllib.request.Request(f"http://127.0.0.1:{info['port']}/api/cli", data=json.dumps({"argv": argv}).encode(),
+                                     headers={"X-Token": info["token"], "Content-Type": "application/json"})
+        r = json.load(urllib.request.urlopen(req, timeout=10))
+        if r.get("not_connected"):
+            return None
+        return r["code"], r["output"]
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def main():
+    argv = sys.argv[1:]
+    args = parse_args(argv)
+    what = f"trinnov {args.command} {' '.join(args.words)}".strip()
+    log(f"{what}: started")
+    if not args.no_service:
+        done = via_service([a for a in argv if a != "--no-service"])
+        if done:
+            code, out = done
+            log(f"{what}: via service: {out.splitlines()[0] if out else 'done'}" + ("" if code == 0 else f" (exit {code})"))
+            print(out)
+            sys.exit(code)
+        log(f"{what}: service not available, talking to the Nova directly")
+    try:
+        result = run(args)
+        log(f"{what}: {result.splitlines()[0] if result else 'done'}")
+        print(result)
     except Fail as e:
+        log(f"{what}: FAILED: {e}")
         print(f"Trinnov: {e}", file=sys.stderr if args.json else sys.stdout)
         sys.exit(e.code)
     except OSError as e:
+        log(f"{what}: FAILED (connection): {e}")
         print(f"Trinnov: connection problem ({e})")
+        sys.exit(1)
+    except Exception as e:                                           # noqa: BLE001
+        log(f"{what}: CRASHED: {type(e).__name__}: {e}")
+        print(f"Trinnov: unexpected problem ({type(e).__name__}: {e})")
         sys.exit(1)
 
 

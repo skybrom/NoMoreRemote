@@ -65,6 +65,17 @@
     font: 600 10.5px/1 inherit; padding: 4px 8px; cursor: pointer; letter-spacing: .03em;
   }
   .cell:hover .deck, .deck:focus-visible { opacity: 1; }
+  .deck.midi { left: 66px; color: var(--ok); }
+  .badge { position: absolute; bottom: 7px; right: 9px; font: 600 10px/1 ui-monospace, Menlo, monospace; color: var(--accent-dim); letter-spacing: .02em; }
+  .tile.learning { border-color: var(--warn); animation: pulse 1s infinite; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 6px rgba(242,153,74,.25); } }
+  .banner.learn { background: #2c3a1f; color: #cde8a0; border-color: #4a6030; }
+  .banner button { margin-left: 12px; }
+  table.map { width: 100%; border-collapse: collapse; font-size: 13px; margin: 8px 0; }
+  table.map td { padding: 5px 4px; border-bottom: 1px solid var(--edge); }
+  table.map td.x { text-align: right; }
+  .midiline { color: var(--legend); font-size: 13px; margin: 2px 0 8px; min-height: 1.4em; }
+  .mapwrap { max-height: 260px; overflow: auto; }
   .deck:hover { border-color: var(--accent); }
     .tile {
     position: relative; min-height: 88px; padding: 14px 12px 12px; border-radius: 12px; border: 1px solid var(--edge);
@@ -126,12 +137,14 @@
   <div class="seg" id="modeSeg" title="Read-only: look, never send">
     <button id="liveBtn" class="active">Live</button><button id="roBtn">Read-only</button>
   </div>
+  <button class="btn" id="midiBtn" title="Control the Nova with MIDI from a controller or a Stream Deck">MIDI…</button>
   <button class="btn" id="deckBtn" title="Make launcher apps you can drop onto Stream Deck keys">Stream Deck…</button>
   <button class="btn" id="reloadBtn" title="Read the Nova again (new presets, sources...)">Reload from Nova</button>
   <button class="btn" id="quitBtn">Quit</button>
 </header>
 
 <div class="titlebar"><strong>Functions</strong><i></i><span>Everything La Remote can do</span></div>
+<div class="banner learn" id="learnBanner"><span id="learnText"></span><button class="btn" id="learnCancel">Cancel</button></div>
 <div class="banner" id="roBanner">Read-only mode: buttons show what they would send, but nothing is sent to the Nova.</div>
 
 <div class="layout" id="layout">
@@ -159,6 +172,19 @@
   The launchers use a copy of the command line kept in your Library folder, so they keep working if you move this app.</p>
   <div class="row"><button class="btn" id="deckClose">Close</button><button class="btn" id="deckOpen">Open folder</button>
   <button class="btn danger" id="deckAll" style="background:var(--accent);border-color:var(--accent);color:#05262b">Make all launchers</button></div>
+</div></div>
+<div class="modal" id="midiModal"><div class="card" style="width:min(560px,92%)">
+  <h3>MIDI</h3>
+  <p style="margin-top:0">Any controller, or a Stream Deck MIDI plugin, can run every function. Send MIDI to the port
+  <b>Trinnov Functions</b> (it appears in MIDI apps by itself), or from any controller already connected to this Mac.
+  A button press is a <b>note on</b>, a <b>program change</b>, or a <b>CC at 64 or more</b>.</p>
+  <div class="midiline" id="midiStatus"></div>
+  <div class="midiline" id="midiLast"></div>
+  <div class="mapwrap"><table class="map" id="midiTable"></table></div>
+  <p style="color:var(--legend);font-size:13px">To map one function: hover its tile, click <b>MIDI</b>, then press the key on your controller.
+  Power Off and Reboot cannot be mapped (a stray note would switch your Nova off).</p>
+  <div class="row"><button class="btn" id="midiClose">Close</button><button class="btn" id="midiClear">Clear all</button>
+  <button class="btn danger" id="midiAuto" style="background:var(--accent);border-color:var(--accent);color:#05262b">Map every function automatically</button></div>
 </div></div>
 <div class="toast" id="toast"></div>
 
@@ -198,6 +224,7 @@ function renderMenu() {
   const i = menu.info;
   setStatus(true, `${i.product.toUpperCase()} #${i.serial} · ${i.firmware || "firmware ?"} · ${menu.nova_ip}`);
   renderMode(menu.read_only);
+  $("quitBtn").style.display = menu.service ? "none" : "";
   if (!current || !menu.sections.some((s) => s.key === current)) current = menu.sections[0].key;
   $("nav").innerHTML = menu.sections.map((s) =>
     `<button data-k="${s.key}" class="${s.key === current ? "active" : ""}">${s.title}<small>${s.items.length || ""}</small></button>`).join("");
@@ -207,8 +234,13 @@ function renderMenu() {
     s.items.map((it) => `<div class="cell"><button class="tile ${it.view_only ? "view" : ""} ${it.momentary ? "momentary" : ""} ${it.danger ? "danger" : ""}"
         data-id="${it.id}" ${it.view_only ? "disabled" : ""}><span class="led"></span><span class="label">${esc(it.label)}</span>
         <span class="sub">${esc(it.sub || "")}</span></button>${it.view_only ? "" : `<button class="deck" data-deck="${it.id}"
-        title="Make a Stream Deck launcher for ${esc(it.label)}" aria-label="Make a Stream Deck launcher for ${esc(it.label)}">+ Deck</button>`}</div>`).join("") + `</div>`;
-  $("tiles").querySelectorAll(".deck").forEach((b) => (b.onclick = async () => {
+        title="Make a Stream Deck launcher for ${esc(it.label)}" aria-label="Make a Stream Deck launcher for ${esc(it.label)}">+ Deck</button>`}${it.view_only || it.danger ? "" : `<button class="deck midi" data-midi="${it.id}"
+        title="Map a MIDI key to ${esc(it.label)}" aria-label="Map a MIDI key to ${esc(it.label)}">MIDI</button>`}${it.midi ? `<span class="badge" title="MIDI: ${esc(it.midi)}">${esc(it.midi)}</span>` : ""}</div>`).join("") + `</div>`;
+  $("tiles").querySelectorAll(".deck.midi").forEach((b) => (b.onclick = async () => {
+    const r = await api("/api/midi/learn", { id: b.dataset.midi });
+    if (!r.ok) toast(r.error || "Failed");
+  }));
+  $("tiles").querySelectorAll(".deck:not(.midi)").forEach((b) => (b.onclick = async () => {
     const r = await api("/api/launcher", { id: b.dataset.deck });
     toast(r.ok ? "Launcher made: drag it from Finder onto a Stream Deck key" : (r.error || "Failed"));
   }));
@@ -218,6 +250,26 @@ function renderMenu() {
 const esc = (x) => String(x ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 let lastState = null;
+let midiVersion = -1;
+async function midiProgress(m) {
+  if (!m) return;
+  const learning = m.learning;
+  $("learnBanner").classList.toggle("show", !!learning);
+  if (learning) $("learnText").textContent = `Listening: press a key, pad or button on your MIDI controller to map it to ${learning.section} / ${learning.label}…`;
+  document.querySelectorAll(".tile").forEach((el) => el.classList.toggle("learning", !!learning && el.querySelector(".label").textContent === learning.label));
+  if (m.version !== midiVersion) {
+    const first = midiVersion === -1; midiVersion = m.version;
+    if (!first) { menu = await api("/api/menu"); renderMenu(); if ($("midiModal").classList.contains("show")) midiUi(); }
+  }
+}
+async function midiUi() {
+  const m = await api("/api/midi");
+  $("midiStatus").textContent = `MIDI helper: ${m.status}. Ports heard: ${m.ports.length ? m.ports.join(", ") : "none yet"}. Virtual port: “${m.virtual_port}”.`;
+  $("midiLast").textContent = m.last ? `Last message: ${m.last.text} value ${m.last.value} from ${m.last.port}` + (m.last.action ? ` → ${m.last.action}` : "") : "No MIDI message received yet.";
+  $("midiTable").innerHTML = m.bindings.length
+    ? m.bindings.map((b) => `<tr><td>${esc(b.section)} / ${esc(b.label)}</td><td>${esc(b.text)}</td></tr>`).join("")
+    : '<tr><td style="color:var(--legend)">No function is mapped yet. Use “Map every function automatically”, or learn them one by one.</td></tr>';
+}
 async function applyState(st) {
   lastState = st;
   if (!st.connected) { setStatus(false, st.error || "Connection lost, reconnecting…"); return; }
@@ -238,6 +290,7 @@ async function applyState(st) {
     if (s.info !== undefined && s.info !== null) el.querySelector(".sub").textContent = el.classList.contains("view") ? s.info : "back to: " + s.info;
     if (s.info === null && el.classList.contains("view")) el.querySelector(".sub").textContent = "";
   });
+  midiProgress(st.midi);
   $("log").innerHTML = st.log.slice().reverse().map((e) =>
     `<div class="entry ${e.kind}"><span class="t">${e.t}</span> ${esc(e.text)}</div>`).join("");
 }
@@ -264,6 +317,14 @@ $("liveBtn").onclick = async () => { await api("/api/readonly", { on: false }); 
 $("roBtn").onclick = async () => { await api("/api/readonly", { on: true }); poll(); };
 $("reloadBtn").onclick = reload;
 $("deckBtn").onclick = () => $("deckModal").classList.add("show");
+$("midiBtn").onclick = () => { midiUi(); $("midiModal").classList.add("show"); };
+$("midiClose").onclick = () => $("midiModal").classList.remove("show");
+$("learnCancel").onclick = () => api("/api/midi/learn", { cancel: true });
+$("midiAuto").onclick = async () => {
+  const r = await api("/api/midi/default", {});
+  toast(r.ok ? `${r.count} functions mapped to notes starting at 36 (channel 1)` : (r.error || "Failed"));
+};
+$("midiClear").onclick = async () => { await api("/api/midi/clear", {}); toast("All MIDI mappings removed"); };
 $("deckClose").onclick = () => $("deckModal").classList.remove("show");
 $("deckOpen").onclick = async () => { await api("/api/launcher", { open_folder: true }); };
 $("deckAll").onclick = async () => {

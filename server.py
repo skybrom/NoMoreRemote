@@ -9,7 +9,7 @@ sets, presets, downmixes, features) is read from that Nova.
     python3 server.py --read-only     # look but never write
     python3 server.py --ip 192.168.1.50
 """
-import argparse, base64, json, os, re, secrets, select, shlex, shutil, socket, struct, subprocess, sys, threading, time
+import argparse, base64, contextlib, io, json, os, re, secrets, select, shlex, shutil, signal, socket, struct, subprocess, sys, threading, time
 import urllib.request
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
@@ -456,6 +456,14 @@ class Model:
                 for e in es:
                     add(sec, tile(e))
             sections.append(sec)
+        step = self.volume_step
+        vol = {"key": "volume", "title": "Volume", "note": f"Volume moves in steps of {step:g} dB (the step La Remote's knob uses).", "items": []}
+        for label, sub, delta in (("Volume up", f"+{step:g} dB", step), ("Volume down", f"-{step:g} dB", -step)):
+            add(vol, {"label": label, "sub": sub, "path": "/optimizer/volume", "value": None, "type": "volume-step",
+                      "delta": delta, "danger": None, "momentary": True})
+        add(vol, {"label": "Mute", "sub": "mute the monitors", "path": "/optimizer/volume/mute", "value": True, "type": "boolean", "danger": None})
+        at = next((n for n, s in enumerate(sections) if s["key"] == "power"), len(sections))
+        sections.insert(at, vol)
         self.sections, self.items = sections, items
         self._adjust()
 
@@ -486,9 +494,20 @@ class Model:
         dup = [i for i in sec["items"] if key(i) == key(item)]
         return item["sub"] if len(dup) > 1 and (item.get("sub") or "").startswith("#") else item["label"]
 
+    def lookup(self, section, selector):
+        """Find a function by section title and its label (or #N): how MIDI mappings and launchers name them."""
+        norm = lambda s: re.sub(r"\W+", "", str(s)).lower()
+        for s in self.sections:
+            if norm(s["title"]) != norm(section):
+                continue
+            for i in s["items"]:
+                if norm(self.selector(s, i)) == norm(selector) or norm(i["label"]) == norm(selector):
+                    return s, i
+        return None, None
+
     # ---- state
     def state_paths(self):
-        paths = {i["path"] for i in self.items.values() if i["type"] != "toggle-preset"}
+        paths = {i["path"] for i in self.items.values() if i["type"] not in ("toggle-preset", "volume-step")}
         paths |= {"/optimizer/volume/volume", "/optimizer/volume/mute", "/monitoring/control/source_select_mode",
                   "/monitoring/control/main_selected_sources", "/optimizer/preset/current/id"}
         return sorted(paths)
@@ -547,6 +566,8 @@ class Model:
             if self.prev_preset is None:
                 raise ValueError("no previous preset known yet: pick a preset first")
             return "/optimizer/preset/current", {"id": self.prev_preset}, f"back to preset {self.prev_preset}"
+        if it["type"] == "volume-step":
+            return "/optimizer/volume", {"dvolume": it["delta"]}, f"{it['label']} ({it['delta']:+g} dB)"
         path, want = it["path"], it["value"]
         parent, key = path.rsplit("/", 1)
         cur = self.link.read(path)
@@ -575,10 +596,12 @@ class Model:
 def install_cli():
     """Copy the command line next to the app's data so launchers keep working if this folder moves."""
     dest = os.path.join(SUPPORT, "cli")
-    os.makedirs(os.path.join(dest, "data"), exist_ok=True)
-    for name in ("server.py", "trinnov.py"):
-        shutil.copy2(os.path.join(HERE, name), os.path.join(dest, name))
-    shutil.copy2(os.path.join(HERE, "data", "functions_tree.json"), os.path.join(dest, "data", "functions_tree.json"))
+    for sub in ("data", "ui", "midi"):
+        os.makedirs(os.path.join(dest, sub), exist_ok=True)
+    if os.path.realpath(HERE) != os.path.realpath(dest):
+        for name in ("server.py", "trinnov.py", os.path.join("data", "functions_tree.json"),
+                     os.path.join("ui", "index.html"), os.path.join("midi", "trinnov-midi.swift")):
+            shutil.copy2(os.path.join(HERE, name), os.path.join(dest, name))
     return os.path.join(dest, "trinnov.py")
 
 
@@ -586,22 +609,37 @@ def applescript_string(s):
     return s.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def make_launcher(cli, section, label, selector, confirm, folder):
+def make_launcher(cli, section, label, selector, confirm, folder, verb="press"):
     """A tiny app that runs `trinnov press <section> <selector>` and shows the result as a notification.
     Dropping it on a Stream Deck key (it creates an 'Open' action) gives a key for that function."""
     name = f"{section} - {label}"
     if selector.startswith("#"):
         name += f" ({selector})"
     name = re.sub(r"[/:\\]", "-", name).strip()
-    args = ["press", section, selector] + (["--yes"] if confirm else [])
+    args = [verb, section, selector] + (["--yes"] if confirm else [])
     cmd = "/usr/bin/python3 " + shlex.quote(cli) + " " + " ".join(shlex.quote(a) for a in args) + " 2>&1"
     guard = ""
     if confirm:
         guard = (f'\tdisplay dialog "{applescript_string(label)}: the Nova will act right away." buttons {{"Cancel", "{applescript_string(label)}"}} '
                  f'default button "Cancel" cancel button "Cancel" with icon caution\n')
-    script = ("try\n" + guard + f'\tset r to do shell script "{applescript_string(cmd)}"\n'
-              '\tdisplay notification r with title "Trinnov"\n'
-              "on error e number n\n\tif n is not -128 then display notification e with title \"Trinnov\" subtitle \"Failed\"\nend try\n")
+    tag = re.sub(r"[^A-Za-z0-9 ._#()-]", "", name)
+    logfile = '"$HOME/Library/Logs/TrinnovLaunchers.log"'
+    stamp = "$(/bin/date '+%Y-%m-%d %H:%M:%S')"
+    opened = f'/bin/echo "{stamp} app {tag}: opened" >> {logfile}'
+    err_prefix = f'/bin/echo "{stamp} app {tag}: ERROR" '
+    lines = ["try", f'\tdo shell script "{applescript_string(opened)}"', "end try", "try"]
+    if guard:
+        lines.append(guard.rstrip("\n"))
+    ok_sound = "[ -e \"$HOME/Library/Application Support/TrinnovFunctions/sounds_off\" ] || /usr/bin/afplay /System/Library/Sounds/Tink.aiff >/dev/null 2>&1 &"
+    bad_sound = ok_sound.replace("Tink", "Basso")
+    lines += [f'\tset r to do shell script "{applescript_string(cmd)}"',
+              f'\tdo shell script "{applescript_string(ok_sound)}"',
+              '\tdisplay notification r with title "Trinnov"',
+              "on error e number n", "\tif n is not -128 then", "\t\ttry",
+              f'\t\t\tdo shell script "{applescript_string(err_prefix)}" & quoted form of e & " >> {applescript_string(logfile)}"',
+              "\t\tend try", f'\t\tdo shell script "{applescript_string(bad_sound)}"',
+              '\t\tdisplay notification e with title "Trinnov" subtitle "Failed"', "\tend if", "end try"]
+    script = "\n".join(lines) + "\n"
     app = os.path.join(folder, name + ".app")
     src = os.path.join(SUPPORT, "launcher_tmp.applescript")
     os.makedirs(folder, exist_ok=True)
@@ -615,7 +653,263 @@ def make_launcher(cli, section, label, selector, confirm, folder):
     return app
 
 
+# ------------------------------------------------------------------ MIDI
+MIDI_SOURCE = os.path.join(HERE, "midi", "trinnov-midi.swift")
+MIDI_BIN = os.environ.get("TRINNOV_MIDI_BIN") or os.path.join(SUPPORT, "trinnov-midi")
+MIDI_MAP = os.path.join(SUPPORT, "midi_map.json")
+MIDI_FIRST_NOTE = 36                                    # automatic mapping starts at C2 (note 36)
+
+
+def midi_text(msg):
+    kind = {"note": "Note", "cc": "CC", "program": "Program"}.get(msg["type"], msg["type"])
+    return f"{kind} {msg['number']} (ch {msg['channel']})"
+
+
+class Midi:
+    """Listens to MIDI (through the trinnov-midi helper) and turns messages into function presses.
+    Every function can be bound: by learning (click MIDI on a tile, press a key) or automatically."""
+
+    def __init__(self, app):
+        self.app = app
+        self.lock = threading.RLock()
+        self.proc = None
+        self.status = "starting"
+        self.ports = []
+        self.last = None
+        self.learning = None                             # {"section", "selector", "label"} while waiting for a message
+        self.version = 0
+        self.fired = {}
+        self.allow_power = False
+        self.bindings = []
+        self.only_ports = [x for x in (os.environ.get("TRINNOV_MIDI_ONLY_PORT") or "").split(",") if x]   # tests only
+        self.load()
+
+    # -- the mapping file
+    def load(self):
+        try:
+            data = json.load(open(MIDI_MAP))
+            self.bindings = [b for b in data.get("bindings", []) if isinstance(b, dict) and "msg" in b]
+            self.allow_power = bool(data.get("allow_power", False))
+        except (OSError, ValueError):
+            self.bindings = []
+
+    def save(self):
+        os.makedirs(SUPPORT, exist_ok=True)
+        with open(MIDI_MAP, "w") as f:
+            json.dump({"version": 1, "allow_power": self.allow_power, "bindings": self.bindings}, f, indent=1)
+        self.version += 1
+
+    # -- the helper process
+    def start(self):
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _ensure_helper(self):
+        if os.path.exists(MIDI_BIN) and (os.environ.get("TRINNOV_MIDI_BIN") or
+                                         os.path.getmtime(MIDI_BIN) >= os.path.getmtime(MIDI_SOURCE)):
+            return True
+        if not os.path.exists(MIDI_SOURCE):
+            self.status = "MIDI helper source missing"
+            return False
+        self.status = "building the MIDI helper (first start, a few seconds)"
+        os.makedirs(SUPPORT, exist_ok=True)
+        r = subprocess.run(["swiftc", "-O", "-o", MIDI_BIN, MIDI_SOURCE], capture_output=True, text=True)
+        if r.returncode != 0:
+            self.status = "MIDI needs Apple's developer tools (swiftc): " + (r.stderr.strip().splitlines() or ["build failed"])[-1][:120]
+            return False
+        return True
+
+    def _run(self):
+        while not self.app.stop.is_set():
+            if not self._ensure_helper():
+                time.sleep(30)
+                continue
+            try:
+                self.proc = subprocess.Popen([MIDI_BIN], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1)
+                self.status = "listening"
+                for line in self.proc.stdout:
+                    try:
+                        self.on_event(json.loads(line))
+                    except ValueError:
+                        pass
+                self.status = "the MIDI helper stopped, restarting"
+            except OSError as e:
+                self.status = f"could not start the MIDI helper: {e}"
+            time.sleep(3)
+
+    def stop(self):
+        if self.proc:
+            self.proc.terminate()
+
+    # -- incoming messages
+    def on_event(self, ev):
+        if ev.get("type") == "ready":
+            self.ports = ev.get("sources", [])
+            self.version += 1
+            return
+        port = ev.get("port", "")
+        if self.only_ports and port not in self.only_ports:
+            return
+        msg = {"type": ev["type"], "channel": ev["channel"], "number": ev["number"]}
+        value = ev.get("value", 0)
+        # a button press: a note on, a program change, or a CC of 64 or more (note off / low CC = release, ignored).
+        # Every such message counts, so a controller that only sends "127" on each press keeps working.
+        pressed = value > 0 if msg["type"] == "note" else True if msg["type"] == "program" else value >= 64
+        with self.lock:
+            self.last = {"text": midi_text(msg), "value": value, "port": port, "at": time.strftime("%H:%M:%S"), "action": None}
+            self.version += 1
+            if not pressed:
+                return
+            if self.learning:
+                if "DAW" in port:                          # controllers' DAW ports chatter constantly; never learn from them
+                    return
+                self._bind(msg)
+                return
+            matches = [b for b in self.bindings if b["msg"] == msg]
+        for b in matches:
+            now = time.time()
+            if now - self.fired.get(json.dumps(b["msg"]), 0) < 0.2:
+                continue                                   # a double trigger
+            self.fired[json.dumps(b["msg"])] = now
+            threading.Thread(target=self._fire, args=(b,), daemon=True).start()
+
+    def _fire(self, b):
+        result = self.app.midi_press(b, self.allow_power)
+        with self.lock:
+            if self.last:
+                self.last["action"] = f"{b['section']}/{b['selector']}: {result}"
+            self.version += 1
+
+    # -- mapping
+    def learn(self, section, selector, label):
+        with self.lock:
+            self.learning = {"section": section, "selector": selector, "label": label}
+            self.version += 1
+
+    def cancel_learn(self):
+        with self.lock:
+            self.learning = None
+            self.version += 1
+
+    def _bind(self, msg):
+        l, self.learning = self.learning, None
+        self.bindings = [b for b in self.bindings if b["msg"] != msg]
+        self.bindings.append({"msg": msg, "section": l["section"], "selector": l["selector"], "label": l["label"]})
+        self.save()
+        self.app.note("info", f"MIDI: {midi_text(msg)} now runs {l['section']}/{l['label']}")
+
+    def unbind(self, section, selector):
+        with self.lock:
+            self.bindings = [b for b in self.bindings if not (b["section"] == section and b["selector"] == selector)]
+            self.save()
+
+    def clear(self):
+        with self.lock:
+            self.bindings = []
+            self.save()
+
+    def map_everything(self, model):
+        """One note per function, in menu order, channel 1, starting at note 36. Power functions are left out."""
+        with self.lock:
+            self.bindings, note = [], MIDI_FIRST_NOTE
+            for s in model.sections:
+                for i in s["items"]:
+                    if i.get("view_only") or i.get("danger") == "confirm" or note > 127:
+                        continue
+                    self.bindings.append({"msg": {"type": "note", "channel": 1, "number": note}, "section": s["title"],
+                                          "selector": model.selector(s, i), "label": i["label"]})
+                    note += 1
+            self.save()
+            return len(self.bindings)
+
+    def brief(self):
+        with self.lock:
+            return {"version": self.version, "last": self.last, "learning": self.learning, "count": len(self.bindings)}
+
+    def info(self):
+        with self.lock:
+            return {**self.brief(), "status": self.status, "ports": self.ports, "virtual_port": "Trinnov Functions",
+                    "allow_power": self.allow_power,
+                    "bindings": [{**b, "text": midi_text(b["msg"])} for b in self.bindings]}
+
+
+# ------------------------------------------------------------------ background service
+SERVICE_LABEL = "com.trinnov.functions"
+SERVICE_PORT = 47633
+SERVICE_PLIST = os.path.expanduser(f"~/Library/LaunchAgents/{SERVICE_LABEL}.plist")
+
+
+def install_service():
+    """A login item (LaunchAgent, no password) that keeps this app running: MIDI, the command and the
+    launchers then work without a browser or Terminal window. Everything it needs is copied next to the data."""
+    import plistlib
+    cli = install_cli()
+    server_py = os.path.join(os.path.dirname(cli), "server.py")
+    plist = {"Label": SERVICE_LABEL, "ProgramArguments": ["/usr/bin/python3", server_py, "--service"],
+             "RunAtLoad": True, "KeepAlive": True, "ThrottleInterval": 10,
+             "StandardOutPath": os.path.expanduser("~/Library/Logs/TrinnovFunctionsService.log"),
+             "StandardErrorPath": os.path.expanduser("~/Library/Logs/TrinnovFunctionsService.log")}
+    os.makedirs(os.path.dirname(SERVICE_PLIST), exist_ok=True)
+    os.makedirs(os.path.expanduser("~/Library/Logs"), exist_ok=True)
+    with open(SERVICE_PLIST, "wb") as f:
+        plistlib.dump(plist, f)
+    if not os.environ.get("TRINNOV_NO_LAUNCHCTL"):
+        domain = f"gui/{os.getuid()}"
+        subprocess.run(["launchctl", "bootout", f"{domain}/{SERVICE_LABEL}"], capture_output=True)
+        r = subprocess.run(["launchctl", "bootstrap", domain, SERVICE_PLIST], capture_output=True, text=True)
+        if r.returncode != 0:
+            raise OSError("launchctl could not start the service: " + (r.stderr.strip() or "unknown error"))
+    return f"http://127.0.0.1:{SERVICE_PORT}/"
+
+
+def uninstall_service():
+    if not os.environ.get("TRINNOV_NO_LAUNCHCTL"):
+        subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}/{SERVICE_LABEL}"], capture_output=True)
+    try:
+        os.remove(SERVICE_PLIST)
+    except OSError:
+        pass
+
+
+def existing_instance():
+    """Another copy of the app (or the service) already running for this user, or None."""
+    try:
+        info = json.load(open(BRIDGE_FILE))
+        if info["pid"] != os.getpid():
+            os.kill(info["pid"], 0)
+            return info
+    except (OSError, ValueError, KeyError):
+        pass
+    return None
+
+
 # ------------------------------------------------------------------ the local app
+class ReadOnlyError(OSError):
+    pass
+
+
+class GuardedLink:
+    """The service's connection as seen by the command and by MIDI: honours Read-only, logs every write."""
+
+    def __init__(self, app):
+        self.app = app
+
+    def read(self, path, timeout=3.0):
+        return self.app.link.read(path, timeout)
+
+    def read_many(self, paths, timeout=3.0):
+        return self.app.link.read_many(paths, timeout)
+
+    def write(self, path, obj):
+        if self.app.read_only:
+            self.app.note("blocked", f"Read-only mode: not sent: {path} <- {json.dumps(obj)}")
+            raise ReadOnlyError("Read-only mode is on: nothing was sent.")
+        self.app.link.write(path, obj)
+        self.app.note("sent", f"{path} <- {json.dumps(obj)}")
+
+    def close(self):
+        pass
+
+
 class App:
     def __init__(self, forced_ip, read_only):
         self.forced_ip = forced_ip
@@ -629,6 +923,8 @@ class App:
         self.nova_ip = None
         self.last_try = 0.0
         self.epoch = 0
+        self.midi = Midi(self)
+        self.service = False
         self.stop = threading.Event()
 
     def note(self, kind, text):
@@ -675,10 +971,11 @@ class App:
             if not self.ready():
                 return {"connected": False, "error": self.error, "read_only": self.read_only}
             m = self.model
-            return {"connected": True, "epoch": self.epoch, "read_only": self.read_only, "nova_ip": self.nova_ip, "info": m.info,
+            return {"connected": True, "epoch": self.epoch, "service": self.service, "read_only": self.read_only, "nova_ip": self.nova_ip, "info": m.info,
                     "menu_source": m.tree_source,
                     "sections": [{"key": s["key"], "title": s["title"], "note": s["note"],
-                                  "items": [{k: i.get(k) for k in ("id", "label", "sub", "type", "danger", "view_only", "momentary")}
+                                  "items": [{**{k: i.get(k) for k in ("id", "label", "sub", "type", "danger", "view_only", "momentary")},
+                                             "midi": self.midi_badge(m, s, i)}
                                             for i in s["items"]]} for s in m.sections]}
 
     def state(self):
@@ -686,7 +983,7 @@ class App:
             if not self.ready():
                 return {"connected": False, "error": self.error, "log": self.log, "read_only": self.read_only}
             st = self.model.poll()
-            st.update({"connected": True, "epoch": self.epoch, "log": self.log, "read_only": self.read_only})
+            st.update({"connected": True, "epoch": self.epoch, "log": self.log, "read_only": self.read_only, "midi": self.midi.brief()})
             return st
 
     def write(self, path, payload, what):
@@ -732,6 +1029,79 @@ class App:
         if reveal and not os.environ.get("TRINNOV_NO_REVEAL"):
             subprocess.run(["open", LAUNCHER_DIR] if make_all else ["open", "-R", paths[0]])
         return {"ok": True, "dir": LAUNCHER_DIR, "count": len(paths), "paths": paths}
+
+    def run_cli(self, argv):
+        """Run a `trinnov` command inside the service, on its live connection."""
+        import trinnov
+        with self.lock:
+            if not self.ready():
+                return {"code": 1, "output": "Trinnov: " + (self.error or "Not connected"), "not_connected": True}
+            buf = io.StringIO()
+            try:
+                with contextlib.redirect_stderr(buf):
+                    args = trinnov.parse_args(argv)
+            except SystemExit:
+                return {"code": 2, "output": "Trinnov: wrong arguments"}
+            self.note("info", "command: trinnov " + " ".join(argv))
+            try:
+                return {"code": 0, "output": trinnov.run(args, ctx=(GuardedLink(self), self.model))}
+            except trinnov.Fail as e:
+                return {"code": e.code, "output": f"Trinnov: {e}"}
+            except ReadOnlyError as e:
+                return {"code": 1, "output": f"Trinnov: {e}"}
+            except Exception as e:                                       # noqa: BLE001
+                return {"code": 1, "output": f"Trinnov: unexpected problem ({type(e).__name__}: {e})"}
+
+    def midi_api(self, path, body):
+        m = self.midi
+        with self.lock:
+            if path == "/api/midi/learn":
+                if body.get("cancel"):
+                    m.cancel_learn()
+                    return {"ok": True}
+                if not self.ready():
+                    return {"ok": False, "error": "Not connected"}
+                sec, item = next(((s, i) for s in self.model.sections for i in s["items"] if i["id"] == body.get("id")), (None, None))
+                if not item or item.get("view_only"):
+                    return {"ok": False, "error": "This entry cannot be mapped."}
+                if item.get("danger") == "confirm" and not m.allow_power:
+                    return {"ok": False, "error": "Power functions cannot be mapped to MIDI: a stray note would switch your Nova off."}
+                m.learn(sec["title"], self.model.selector(sec, item), item["label"])
+                return {"ok": True}
+            if path == "/api/midi/unlearn":
+                sec, item = next(((s, i) for s in self.model.sections for i in s["items"] if i["id"] == body.get("id")), (None, None))
+                if item:
+                    m.unbind(sec["title"], self.model.selector(sec, item))
+                return {"ok": True}
+            if path == "/api/midi/default":
+                if not self.ready():
+                    return {"ok": False, "error": "Not connected"}
+                return {"ok": True, "count": m.map_everything(self.model)}
+            if path == "/api/midi/clear":
+                m.clear()
+                return {"ok": True}
+        return {"ok": False, "error": "unknown MIDI request"}
+
+    def midi_badge(self, model, sec, item):
+        sel = model.selector(sec, item)
+        texts = [("N" if b["msg"]["type"] == "note" else "CC" if b["msg"]["type"] == "cc" else "PC") + str(b["msg"]["number"])
+                 for b in self.midi.bindings if b["section"] == sec["title"] and b["selector"] == sel]
+        return " ".join(texts) or None
+
+    def midi_press(self, binding, allow_power):
+        """A MIDI message was bound to a function: press it, the same way a tap on the tile would."""
+        with self.lock:
+            if not self.ready():
+                return "not connected to the Nova"
+            sec, item = self.model.lookup(binding["section"], binding["selector"])
+            if not item:
+                self.note("error", f"MIDI: no function '{binding['section']}/{binding['selector']}' on this Nova")
+                return "function not found"
+            if item.get("danger") == "confirm" and not allow_power:
+                self.note("blocked", f"MIDI: {sec['title']}/{item['label']} is a Power function: not allowed over MIDI")
+                return "Power is not allowed over MIDI"
+            r = self.press(item["id"], True)
+            return "sent" if r.get("ok") else (r.get("error") or "failed")
 
     def volume(self, delta):
         with self.lock:
@@ -786,6 +1156,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(403, {"error": "forbidden"})
         if path == "/api/menu":
             return self._send(200, self.app.menu())
+        if path == "/api/midi":
+            return self._send(200, self.app.midi.info())
         if path == "/api/state":
             return self._send(200, self.app.state())
         self._send(404, {"error": "not found"})
@@ -802,6 +1174,10 @@ class Handler(BaseHTTPRequestHandler):
         a = self.app
         if path == "/api/press":
             return self._send(200, a.press(str(body.get("id")), bool(body.get("confirm"))))
+        if path.startswith("/api/midi"):
+            return self._send(200, a.midi_api(path, body))
+        if path == "/api/cli":
+            return self._send(200, a.run_cli([str(x) for x in body.get("argv", [])]))
         if path == "/api/launcher" and body.get("open_folder"):
             os.makedirs(LAUNCHER_DIR, exist_ok=True)
             if not os.environ.get("TRINNOV_NO_REVEAL"):
@@ -833,9 +1209,34 @@ def main():
     ap.add_argument("--read-only", action="store_true", help="never send anything to the Nova")
     ap.add_argument("--no-open", action="store_true", help="do not open the browser")
     ap.add_argument("--port", type=int, default=0, help="local port for the app (default: any free port)")
+    ap.add_argument("--service", action="store_true", help="run as the background service (fixed port, no browser)")
+    ap.add_argument("--install-service", action="store_true", help="install the background service for this user (no password)")
+    ap.add_argument("--uninstall-service", action="store_true", help="remove the background service")
     args = ap.parse_args()
 
+    if args.install_service:
+        try:
+            print(f"Background service installed. Open {install_service()} any time; it starts at every login.")
+        except OSError as e:
+            print(f"Could not install the service: {e}")
+            sys.exit(1)
+        return
+    if args.uninstall_service:
+        uninstall_service()
+        print("Background service removed.")
+        return
+    other = existing_instance()
+    if other:                                            # never start a second copy (it would double every MIDI action)
+        url = f"http://127.0.0.1:{other['port']}/"
+        print(f"Trinnov Functions is already running: {url}", flush=True)
+        if not args.no_open and not args.service:
+            webbrowser.open(url)
+        return
+    if args.service:
+        args.port, args.no_open = SERVICE_PORT, True
+
     app = App(args.ip or os.environ.get("TRINNOV_IP"), args.read_only)
+    app.service = args.service
     Handler.app = app
     srv = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     port = srv.server_address[1]
@@ -843,6 +1244,14 @@ def main():
     url = f"http://127.0.0.1:{port}/"
     print(f"Trinnov Functions running at {url}  (Ctrl-C or the Quit button to stop)", flush=True)
     threading.Thread(target=app.connect, daemon=True).start()
+    register_instance(port, app.token)
+    app.midi.start()
+
+    def keep_alive():                                    # reconnect on its own when the Nova is switched off and on
+        while not app.stop.wait(15 if app.model else 30):
+            app.ready()
+    threading.Thread(target=keep_alive, daemon=True).start()
+    signal.signal(signal.SIGTERM, lambda *_: app.stop.set())
     if not args.no_open:
         webbrowser.open(url)
     try:
@@ -850,8 +1259,33 @@ def main():
             pass
     except KeyboardInterrupt:
         pass
+    app.midi.stop()
     srv.shutdown()
+    unregister_instance()
+
+
+BRIDGE_FILE = os.path.join(SUPPORT, "bridge.json")
+
+
+def register_instance(port, token):
+    """Tell the `trinnov` command (and launchers) that this instance is running, so they use its connection."""
+    try:
+        os.makedirs(SUPPORT, exist_ok=True)
+        fd = os.open(BRIDGE_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump({"pid": os.getpid(), "port": port, "token": token}, f)
+    except OSError:
+        pass
+
+
+def unregister_instance():
+    try:
+        if json.load(open(BRIDGE_FILE)).get("pid") == os.getpid():
+            os.remove(BRIDGE_FILE)
+    except (OSError, ValueError):
+        pass
 
 
 if __name__ == "__main__":
-    main()
+    import server as _module            # run as the importable module so `trinnov` and the app share one copy
+    _module.main()
